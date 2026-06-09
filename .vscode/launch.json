@@ -1,0 +1,64 @@
+{
+  // Debug the sparsi-ts examples with the local tsx runtime.
+  // API keys (CLAUDE_API_KEY / ANTHROPIC_API_KEY, GEMINI_API_KEY, ...) are read
+  // from a .env file at the repo root, if present (.env is gitignored).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Debugs whichever examples/*.ts file is open in the editor.
+      "name": "Debug current example file",
+      "type": "node",
+      "request": "launch",
+      "program": "${file}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/tsx",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Pick an example from a dropdown; optionally pass CLI args.
+      "name": "Debug example (pick from list)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/${input:example}.ts",
+      "args": "${input:exampleArgs}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/tsx",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "example",
+      "type": "pickString",
+      "description": "Which example to debug?",
+      "options": [
+        "temperature",
+        "ticket-triager",
+        "recipe-analyzer",
+        "stock-analyzer",
+        "weather-advisor",
+        "with-repair",
+        "faithful-summary",
+        "hn-topic-brief",
+        "readme-quality",
+        "local-mcp-server",
+        "remote-mcp-server",
+        "rag-bm25",
+        "rag-gemini-embed"
+      ],
+      "default": "faithful-summary"
+    },
+    {
+      "id": "exampleArgs",
+      "type": "promptString",
+      "description": "CLI args (e.g. --text \"...\" or --file path). Leave blank for none.",
+      "default": ""
+    }
+  ]
+}
