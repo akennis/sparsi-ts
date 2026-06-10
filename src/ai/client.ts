@@ -31,8 +31,9 @@ export class AnthropicClient implements AIClient {
   private readonly sdk: Anthropic;
 
   constructor(opts: AnthropicClientOptions = {}) {
-    const apiKey =
-      opts.apiKey ?? process.env.CLAUDE_API_KEY ?? process.env.ANTHROPIC_API_KEY;
+    // Only CLAUDE_API_KEY is read (the descriptions advertise CLAUDE_API_KEY
+    // exclusively).
+    const apiKey = opts.apiKey ?? process.env.CLAUDE_API_KEY;
     this.defaultModel = opts.model ?? "claude-sonnet-4-6";
     this.sdk = new Anthropic({ apiKey, ...opts.sdkOptions });
   }
@@ -65,9 +66,8 @@ export interface GeminiClientOptions {
 
 /**
  * AIClient backed by the official `@google/genai` SDK (the `provider: "gemini"`
- * path from sparsi-go's geminiCaller). Maps the shared {@link AICallRequest}
- * onto GenerateContent: system → systemInstruction, messages → user/model
- * contents, maxTokens → maxOutputTokens.
+ * path). Maps the shared {@link AICallRequest} onto GenerateContent: system →
+ * systemInstruction, messages → user/model contents, maxTokens → maxOutputTokens.
  */
 export class GeminiClient implements AIClient {
   readonly defaultModel: string;
@@ -97,7 +97,9 @@ export class GeminiClient implements AIClient {
     }));
     const config: GenerateContentConfig = {};
     if (req.system) config.systemInstruction = req.system;
-    if (req.maxTokens !== undefined) config.maxOutputTokens = req.maxTokens;
+    // Gemini truncates very small token budgets, causing spurious parse failures,
+    // so floor any small budget at 64.
+    if (req.maxTokens !== undefined) config.maxOutputTokens = Math.max(req.maxTokens, 64);
     if (req.temperature !== undefined) config.temperature = req.temperature;
     if (signal) config.abortSignal = signal;
 

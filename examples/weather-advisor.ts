@@ -1,20 +1,20 @@
 /**
  * AI example — a weather-aware outfit advisor.
  *
- * Faithful port of sparsi-go examples/weather-advisor/main.go. Given a city
- * (live wttr.in API) or a captured fixture, it extracts temperature,
+ * Given a city (live wttr.in API) or a captured fixture, it extracts temperature,
  * precipitation, and wind; AI-parses each into a number; derives a temperature
  * band and boolean wet/windy flags deterministically; multi-label-classifies the
  * conditions; packs every signal into one description; then asks an AI for a
  * two-sentence outfit recommendation. An orthogonal AIBool probe checks for
  * unusual weather and appends a warning suffix.
  *
- * The Go program's `-mcp` stdio-server wrapper is intentionally omitted (§6g: the
- * MCP-server wrapper is optional). The `--city` (live) and `--fixture` (offline)
- * CLI modes are both kept; the live HTTP fetch / fixture read is resolved here in
- * main() rather than in-graph, so the workflow itself is the pure analysis DAG.
+ * The `--city` (live) and `--fixture` (offline) CLI modes are both kept; the live
+ * HTTP fetch / fixture read is resolved here in main() rather than in-graph, so
+ * the workflow itself is the pure analysis DAG.
  *
  * Requires CLAUDE_API_KEY (or ANTHROPIC_API_KEY). `--city` also hits live network.
+ * With no args it defaults to a live "New York" lookup.
+ *   npm run example:weather                                  # live "New York"
  *   npm run example:weather -- --city London
  *   npm run example:weather -- --fixture examples/testdata/weather/london.json
  */
@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { Workflow, ai, ops } from "../src";
 
-// Deterministic thresholds (verbatim from the Go context-value consts).
+// Deterministic thresholds.
 const PRECIP_THRESH = 0.1; // mm — above this it's "rainy/wet"
 const WIND_THRESH = 25.0; // kph — above this it's "windy"
 const WARNING = "  ⚠ unusual weather";
@@ -36,7 +36,7 @@ const PATH_DESC = "current_condition.0.weatherDesc.0.value";
 // Multi-label weather condition categories (verbatim).
 const CONDITION_CATEGORIES = ["rain", "snow", "fog", "sun", "cloud", "storm"];
 
-// AI-op prompt fragments (verbatim from the Go Params blocks).
+// AI-op prompt fragments.
 const OP_PARSE_TEMP = "extract the temperature value as a plain number with no units";
 const OP_PARSE_PRECIP = "extract the precipitation amount as a plain number with no units";
 const OP_PARSE_WIND = "extract the wind speed as a plain number with no units";
@@ -101,9 +101,8 @@ function build() {
     ai.aiClassifyMultiLabel(descStr, { categories: CONDITION_CATEGORIES }, ctx),
     { name: "classify_conditions" });
 
-  // Stage 6 — pack all signals into one description string (Go PackOutfitInputsOp:
-  // same %.1f temperature format, "rainy/wet"/"dry", "windy"/"calm", ", "-joined
-  // conditions or "unspecified").
+  // Stage 6 — pack all signals into one description string: 1-decimal temperature,
+  // "rainy/wet"/"dry", "windy"/"calm", ", "-joined conditions or "unspecified".
   const outfitInput = wf.op(
     { band, wet, windy, tempC, conditions },
     ({ band, wet, windy, tempC, conditions }) =>
@@ -154,15 +153,14 @@ async function main() {
     console.error("CLAUDE_API_KEY (or ANTHROPIC_API_KEY) is required");
     process.exit(1);
   }
-  const { city, fixture } = parseArgs(process.argv.slice(2));
-  if (!city && !fixture) {
-    console.error("usage: weather-advisor --city <name>  |  --fixture <path>");
-    process.exit(2);
-  }
-  if (city && fixture) {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.city && parsed.fixture) {
     console.error("specify exactly one of --city or --fixture");
     process.exit(2);
   }
+  // Default to a live "New York" lookup so the example runs with no args.
+  const city = parsed.city ?? (parsed.fixture ? undefined : "New York");
+  const fixture = parsed.fixture;
 
   // Resolve the wttr.in j1 body: read a fixture offline, or fetch live.
   let body: string;

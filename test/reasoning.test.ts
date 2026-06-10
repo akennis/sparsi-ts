@@ -1,25 +1,16 @@
 /**
- * Reasoning-log parity, mirroring sparsi-go library/reasoning_test.go.
+ * Reasoning-log coverage.
  *
- * Go threads a *ReasoningLog through context.WithValue (WithReasoningLog /
- * logFromCtx) and AI ops call recordReasoning(ctx, op, inputs, output, reason).
- * sparsi-ts replaces the context-key plumbing with the idiomatic
- * RunOptions.reasoning flag + the per-run logger the engine installs; the
- * collected records surface on RunResult.reasoning in completion (recording)
+ * The RunOptions.reasoning flag turns on a per-run logger the engine installs;
+ * the collected records surface on RunResult.reasoning in completion (recording)
  * order. These tests exercise that surface through real AI ops driven by a
- * MockAIClient, asserting the same observable behavior the Go tests pin down:
- * empty-by-default, single/multiple-entry shape (node/inputs/result/reasoning),
- * recording order, the Inputs snapshot, the disabled-is-a-noop rule, and
- * lossless appends under concurrency.
+ * MockAIClient: empty-by-default, single/multiple-entry shape
+ * (node/inputs/result/reasoning), recording order, the inputs snapshot, the
+ * disabled-is-a-noop rule, and lossless appends under concurrency.
  *
- * Intentionally NOT ported (no idiomatic TS analogue):
- *   - TestWithReasoningLog_* / TestLogFromCtx_* / TestRecordReasoning_NoopOnPlainContext:
- *     Go's context-key injection. Replaced by the RunOptions.reasoning flag —
- *     covered here by "disabled records nothing" vs the reasoning-enabled tests.
- *   - TestReasoningLog_EntriesIsSnapshot: Go's Entries() returns a defensive copy
- *     because the log is mutated live during a run AND read concurrently. TS
- *     exposes RunResult.reasoning once, after run() resolves, as the single final
- *     snapshot — there is no live internal log to desync from.
+ * RunResult.reasoning is exposed once, after run() resolves, as a single final
+ * snapshot — there is no live internal log to desync from, so a separate
+ * defensive-copy test is unnecessary.
  */
 
 import { test } from "node:test";
@@ -76,7 +67,7 @@ test("a single AI op records one entry with node/inputs/result/reasoning", async
   assert.equal(e.node, "aiScore");
   assert.equal(e.reasoning, "low toxicity");
   assert.equal(e.result, 0.1);
-  // Go AIScoreOp records Inputs {Input, Criterion}.
+  // aiScore records the {Input, Criterion} snapshot.
   assert.equal(e.inputs?.Input, "hello world");
   assert.equal(e.inputs?.Criterion, "toxicity");
 });
@@ -158,8 +149,7 @@ test("WithRepair records an Inputs snapshot on repair success", async () => {
   const e = result.reasoning[0]!;
   assert.equal(e.reasoning, "repaired after 1 attempt(s)");
   assert.equal(e.result, "ok:fixed");
-  // Go WithRepair records Inputs {name, input_field, max_attempts}; input_field
-  // (a reflection field name) has no typed-TS analogue and is omitted.
+  // withRepair records the {name, max_attempts} snapshot.
   assert.equal(e.inputs?.name, "demo");
   assert.equal(e.inputs?.max_attempts, 5);
 });

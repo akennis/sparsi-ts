@@ -5,7 +5,12 @@ export const parse = <T = unknown>(s: string): T => JSON.parse(s) as T;
 export const stringify = (v: unknown, pretty = false): string =>
   JSON.stringify(v, null, pretty ? 2 : undefined);
 
-/** Reads a dotted path (e.g. "a.b.0.c") from a nested value. */
+/**
+ * CONVENIENCE dotted-path reader over an already-parsed value, returning the raw
+ * value (or undefined). The catalog op is {@link jsonExtract}, which parses a JSON
+ * *string* and returns a JSON-encoded leaf. Use `get` for in-memory traversal,
+ * `jsonExtract` for the op semantics.
+ */
 export function get<T = unknown>(obj: unknown, path: string): T | undefined {
   let cur: unknown = obj;
   for (const seg of path.split(".")) {
@@ -22,20 +27,19 @@ export const merge = <A extends object, B extends object>(a: A, b: B): A & B => 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Faithful Go op catalog (sparsi-go library/json_ops.go). JSONExtractOp mirrors
-// the Go op's traversal semantics and error wording exactly.
+// JSON op catalog: JSONExtractOp traverses a JSON string by dot-separated path.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const JSONExtractOpDescription =
   `JSONExtractOp: extracts a value from a JSON string using a dot-separated path. Numeric path segments index into arrays (e.g. "meals.0.name"). Inputs: JSON *string, Path *string. Output: Value string (JSON-encoded leaf, or "" if not found).`;
 
-/** Message of the sentinel Go wraps when a required path can't be traversed. */
+/** Message wrapped when a required path can't be traversed. */
 export const ErrRequiredPathMissing = "required path missing";
 
-/** Quotes a string the way Go's `%q` verb would (close enough for diagnostics). */
+/** Quotes a string for diagnostics (escapes control/quote chars). */
 const q = (s: string): string => JSON.stringify(s);
 
-/** Go-style `%T` name for the scalar leaf types JSONExtractOp can encounter. */
+/** Type name reported for the scalar leaf types JSONExtractOp can encounter. */
 function goTypeName(v: unknown): string {
   if (v === null) return "<nil>";
   if (typeof v === "number") return "float64";
@@ -65,7 +69,9 @@ export function jsonExtract(jsonStr: string, path: string, required = false): st
   for (const key of path.split(".")) {
     if (key === "") continue;
     if (Array.isArray(cur)) {
-      const idx = Number(key);
+      // Only a plain optionally-signed integer literal indexes an array; reject
+      // "0x10", "+3", " 1 ", etc. so malformed segments fail rather than coerce.
+      const idx = /^-?\d+$/.test(key) ? Number(key) : NaN;
       if (!Number.isInteger(idx) || idx < 0 || idx >= cur.length) {
         if (required)
           throw new Error(

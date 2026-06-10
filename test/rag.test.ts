@@ -29,14 +29,14 @@ import type {
   Retriever,
 } from "../src/rag";
 
-// Some sparsi-go cases have no idiomatic-TS analogue and are intentionally
-// omitted (the underlying Go mechanism is replaced, not the behavior):
-//   - SetupRejectsMalformed{FactoryTimeout,EmbedTimeout}: TS uses typed `number`
-//     options, so there is no string to mis-parse (negative embedTimeout is
-//     still rejected, and that case IS ported below).
-//   - PreservesUpstreamEmbeddingCredentialsWhenUnset: Go reads creds from an
-//     ambient ctx bag an outer op could pre-populate; the TS op carries no such
-//     bag (creds are built from typed options), so there is nothing to preserve.
+// A couple of edge cases don't apply to this typed API and are intentionally not
+// tested:
+//   - Malformed factory/embed timeout parsing: the options are typed `number`,
+//     so there is no string to mis-parse (a negative embedTimeout is still
+//     rejected, and that case IS tested below).
+//   - Preserving pre-populated embedding credentials: the op carries no ambient
+//     credential bag (creds are built from typed options), so there is nothing to
+//     preserve.
 
 // ─── Test doubles ──────────────────────────────────────────────────────────
 
@@ -690,7 +690,7 @@ test("validateCitations: null raw → empty; null allowed → all rejected", () 
   });
 });
 
-test("MetadataSource constant matches the Go key", () => {
+test("MetadataSource constant is the expected key", () => {
   assert.equal(MetadataSource, "source");
 });
 

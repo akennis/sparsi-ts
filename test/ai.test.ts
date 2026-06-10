@@ -76,6 +76,60 @@ test("aiCompute reasoning envelope captures reasoning", async () => {
   assert.equal(result.reasoning[0]!.reasoning, "because");
 });
 
+test("aiCompute reasoning envelope re-serializes non-string result as JSON text (F6)", async () => {
+  // A JSON object result must round-trip to its literal JSON text, not "[object Object]".
+  const obj = await runOp(
+    new ai.MockAIClient(['{"result":{"a":1},"reasoning":"r"}']),
+    (ctx) => aiCompute<string>("x", { operation: "x", output: "string" }, ctx),
+    { reasoning: true },
+  );
+  assert.equal(obj.value, '{"a":1}');
+
+  // A JSON null result becomes the literal "null", not the empty string.
+  const nul = await runOp(
+    new ai.MockAIClient(['{"result":null,"reasoning":"r"}']),
+    (ctx) => aiCompute<string>("x", { operation: "x", output: "string" }, ctx),
+    { reasoning: true },
+  );
+  assert.equal(nul.value, "null");
+});
+
+test("aiBool reasoning mode does not coerce a string 'false' to true (F1)", async () => {
+  // {"result":"false"} is not a JSON boolean: it must retry, never decode as true.
+  const mock = new ai.MockAIClient([
+    '{"result":"false","reasoning":"stringly typed"}',
+    '{"result":false,"reasoning":"real bool"}',
+  ]);
+  const { value } = await runOp(
+    mock,
+    (ctx) => ai.aiBool("text", { predicate: "is it?" }, ctx),
+    { reasoning: true },
+  );
+  assert.equal(value, false);
+  assert.equal(mock.calls.length, 2);
+});
+
+test("aiBool reasoning mode accepts a real JSON boolean (F1)", async () => {
+  const { value } = await runOp(
+    new ai.MockAIClient(['{"result":true,"reasoning":"yes"}']),
+    (ctx) => ai.aiBool("text", { predicate: "is it?" }, ctx),
+    { reasoning: true },
+  );
+  assert.equal(value, true);
+});
+
+test("aiScore reasoning mode defaults a missing score to 0", async () => {
+  // An absent score is accepted as 0.0 rather than treated as a parse failure.
+  const mock = new ai.MockAIClient(['{"reasoning":"forgot the score"}']);
+  const { value } = await runOp(
+    mock,
+    (ctx) => ai.aiScore("text", { criterion: "relevance" }, ctx),
+    { reasoning: true },
+  );
+  assert.equal(value, 0);
+  assert.equal(mock.calls.length, 1);
+});
+
 test("modeSelect retries until a valid category", async () => {
   const mock = new ai.MockAIClient(["nonsense", "billing"]);
   const { value } = await runOp(mock, (ctx) =>

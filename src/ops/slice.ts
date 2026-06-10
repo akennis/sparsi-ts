@@ -24,10 +24,10 @@ export const range = (n: number): number[] =>
   Array.from({ length: Math.max(0, n) }, (_, i) => i);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Faithful Go op catalog (sparsi-go library/slice_ops.go). Each function mirrors
-// a registered Go operator's Run() semantics and error wording exactly. The
-// `*Description` constants are verbatim from Go. Go's ops are typed to []string;
-// the index/length/top-k helpers are generic where the element type is immaterial.
+// Slice op catalog: len / at / first / last / contains / join / filter / top-k.
+// The `*Description` constants are the user-facing op docs. The string ops are
+// typed to string[]; the index/length/top-k helpers are generic where the element
+// type is immaterial.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SliceLenOpDescription =
@@ -74,8 +74,11 @@ export const sliceJoin = (input: string[], sep = ","): string => input.join(sep)
 export const sliceFilterEq = <T>(input: T[], value: T): T[] =>
   input.filter((s) => s === value);
 
-/** Indices of the K highest scores, descending (ties broken by original order). */
-export function sliceTopK(scores: number[], k: number): number[] {
+/**
+ * Indices of the K highest scores, descending. `k` defaults to 1. Ties are broken
+ * by ascending original index, so the result is deterministic.
+ */
+export function sliceTopK(scores: number[], k = 1): number[] {
   if (!Number.isInteger(k) || k < 1)
     throw new Error(`SliceTopKOp: invalid k "${k}"`);
   const indices = scores.map((_, i) => i);

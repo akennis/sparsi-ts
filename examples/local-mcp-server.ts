@@ -1,8 +1,7 @@
 /**
  * MCP example — a local (stdio) playwright-mcp Google-search-and-screenshot DAG.
  *
- * Faithful port of sparsi-go examples/local-mcp-server/main.go. Two MCPScriptOp
- * variants are composed via a map fan-out:
+ * Two MCPScriptOp variants are composed via a map fan-out:
  *
  *   query ─► find_results ─► shoot_each (map) ─► screenshot_results
  *           (one playwright-mcp   (per-URL playwright-mcp
@@ -20,14 +19,14 @@
  * one URL is captured on that URL's ShotResult and reported alongside the
  * successes — it never aborts the DAG.
  *
- * The Go `-mcp` stdio-server wrapper is intentionally omitted (§6g: the dual-mode
- * CLI/MCP-server wrapper is optional); this is a clean CLI entry point. The
- * search query is the workflow input; the screenshot output directory is
- * operational config resolved in main().
+ * A clean CLI entry point: the search query is the workflow input; the screenshot
+ * output directory is operational config resolved in main().
  *
  * Prerequisites:
- *   - npx on PATH (Node.js). The first run downloads @playwright/mcp@latest plus
- *     a browser binary; later runs reuse the cache.
+ *   - npx on PATH (Node.js). The first run downloads @playwright/mcp@latest; later
+ *     runs reuse the cache.
+ *   - Playwright's Chromium browser: `npx playwright install chromium` (the opts
+ *     below pass `--browser chromium`, so no system Google Chrome is needed).
  *   - No CLAUDE_API_KEY required.
  *     npm run example:local-mcp
  *     npm run example:local-mcp -- --query "Shizuoka" --out-dir C:\shots
@@ -147,7 +146,7 @@ interface ShotResult {
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** Go %q-style quoting for diagnostic messages. */
+/** Quotes a string for diagnostic messages. */
 const q = (s: string): string => JSON.stringify(s);
 
 function truncate(s: string, n: number): string {
@@ -162,10 +161,10 @@ function screenshotName(url: string): string {
 /**
  * Pulls a string out of a browser_evaluate structured payload that may be a bare
  * string, a `{ result: "foo" }` wrapper, or empty/false/null. Returns "" for
- * falsy/missing values (the analog of Go's normalizeJSStringResult).
+ * falsy/missing values.
  */
-function normalizeJSStringResult(structured: Record<string, unknown> | undefined): string {
-  if (structured === undefined) return "";
+function normalizeJSStringResult(structured: unknown): string {
+  if (structured === null || typeof structured !== "object") return "";
   const r = (structured as { result?: unknown }).result;
   if (typeof r === "string") return r.trim();
   return "";
@@ -224,7 +223,7 @@ function decodeFirstJSONValue(s: string): unknown {
  * strip that framing if present and then scan for the first '[' or '{'.
  */
 function parseURLList(
-  structured: Record<string, unknown> | undefined,
+  structured: unknown,
   text: string,
 ): string[] | null {
   if (structured !== undefined) {
@@ -247,10 +246,14 @@ function parseURLList(
 /** stdio playwright-mcp connection options shared by both steps. */
 const PLAYWRIGHT_OPTS = {
   command: "npx",
+  // `--browser chromium` uses Playwright's bundled Chromium (installed via
+  // `npx playwright install chromium`) instead of playwright-mcp's default
+  // "chrome" channel, which requires a system Google Chrome install.
+  //
   // playwright-mcp's internal action / navigation guards default to 5000ms /
   // 30000ms. Heavy fonts or slow CDNs blow past the 5 s action guard during
   // browser_take_screenshot, so we widen both via the playwright-mcp CLI flags.
-  args: ["-y", "@playwright/mcp@latest", "--timeout-action", "30000", "--timeout-navigation", "60000"],
+  args: ["-y", "@playwright/mcp@latest", "--browser", "chromium", "--timeout-action", "30000", "--timeout-navigation", "60000"],
   initTimeoutMs: 120000,
   callTimeoutMs: 90000,
   maxRetries: 1,

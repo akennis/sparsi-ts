@@ -1,11 +1,9 @@
 /**
- * Embedding clients + pluggable factory, ported from sparsi-go
- * library/embedding_factory.go.
+ * Embedding clients + pluggable factory.
  *
- * Go returns raw provider SDK clients and threads credentials through
- * context.WithValue; in TS the {@link EmbeddingClient} interface abstracts the
- * provider call, credentials are a typed {@link EmbeddingCredentials} value, and
- * the factory-lookup deadline is modeled with {@link withDeadline}.
+ * The {@link EmbeddingClient} interface abstracts the provider call, credentials
+ * are a typed {@link EmbeddingCredentials} value, and the factory-lookup deadline
+ * is modeled with {@link withDeadline}.
  *
  * SECURITY: the bundled {@link EnvEmbeddingClientFactory}'s per-ref cache has NO
  * eviction. Do NOT derive `ref` from per-request / untrusted input (tenant id,
@@ -130,10 +128,12 @@ export class GeminiEmbeddingClient implements EmbeddingClient {
     const out: number[][] = [];
     for (let i = 0; i < embeds.length; i++) {
       const e = embeds[i];
-      if (e == null || e.values == null) {
+      // Only a missing embedding entry is an error; an entry that carries no
+      // `values` is treated as an empty vector rather than rejected.
+      if (e == null) {
         throw new Error(`gemini embedding: nil embedding at index ${i}`);
       }
-      out.push(e.values);
+      out.push(e.values ?? []);
     }
     return out;
   }
@@ -155,7 +155,9 @@ export class GeminiEmbeddingClient implements EmbeddingClient {
 export class EnvEmbeddingClientFactory implements EmbeddingClientFactory {
   private readonly gemini = new Map<string, GoogleGenAI>();
 
-  embedder(provider: string, model: string, ref = ""): EmbeddingClient {
+  // `_signal` is part of the EmbeddingClientFactory contract; this factory is
+  // synchronous and ignores it, but the param is kept for conformance.
+  embedder(provider: string, model: string, ref = "", _signal?: AbortSignal): EmbeddingClient {
     if (provider !== "gemini") {
       throw new Error(
         `EnvEmbeddingClientFactory: provider "${provider}" not supported; register a custom EmbeddingClientFactory via registerEmbeddingClientFactory (or setDefaultEmbeddingClientFactory)`,

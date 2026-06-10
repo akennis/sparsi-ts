@@ -24,7 +24,8 @@
     "example:local-mcp": "tsx examples/local-mcp-server.ts",
     "example:remote-mcp": "tsx examples/remote-mcp-server.ts",
     "example:rag-bm25": "tsx examples/rag-bm25.ts",
-    "example:rag-gemini-embed": "tsx examples/rag-gemini-embed.ts"
+    "example:rag-gemini-embed": "tsx examples/rag-gemini-embed.ts",
+    "example:runner": "tsx examples/example-runner.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",

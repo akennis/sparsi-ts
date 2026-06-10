@@ -10,8 +10,7 @@ export const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Faithful Go op catalog (sparsi-go library/time_ops.go). CityTimeOp mirrors the
-// Go op's supported-city set and error wording exactly.
+// Time op catalog: CityTimeOp returns the current local time for a supported city.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CityTimeOpDescription = `CityTimeOp: returns the current time for a supported city.
@@ -23,35 +22,51 @@ const cityTimezones: Record<string, string> = {
   Tokyo: "Asia/Tokyo",
 };
 
-/** Formats `date` in the given IANA timezone as RFC3339 (`…±HH:MM`). */
+/** Parses an Intl "longOffset" string (e.g. "GMT-04:00", "GMT+09:00", "GMT"). */
+function parseLongOffset(longOffset: string): string {
+  const m = longOffset.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
+  if (!m) return "+00:00"; // bare "GMT" === UTC
+  return `${m[1]}${m[2]!.padStart(2, "0")}:${(m[3] ?? "00").padStart(2, "0")}`;
+}
+
+/**
+ * Formats `date` in the given IANA timezone as RFC3339 (`…±HH:MM`). The offset is
+ * read directly from the zone's "longOffset" name (the exact IANA offset, correct
+ * across DST) rather than back-computed from a UTC delta. Throws a `CityTimeOp:`
+ * error if the zone can't be loaded or silently fell back to UTC (missing ICU/tz
+ * data).
+ */
 function formatRFC3339InZone(date: Date, timeZone: string): string {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+  let dtf: Intl.DateTimeFormat;
+  try {
+    dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZoneName: "longOffset",
+    });
+  } catch (err) {
+    throw new Error(
+      `CityTimeOp: failed to load timezone "${timeZone}": ${(err as Error).message}`,
+    );
+  }
+  if (dtf.resolvedOptions().timeZone !== timeZone) {
+    throw new Error(
+      `CityTimeOp: failed to load timezone "${timeZone}": zone did not apply (missing ICU/timezone data?)`,
+    );
+  }
   const parts: Record<string, string> = {};
   for (const p of dtf.formatToParts(date)) parts[p.type] = p.value;
   const hour = parts.hour === "24" ? "00" : parts.hour!;
-  const asLocalUTC = Date.UTC(
-    Number(parts.year),
-    Number(parts.month) - 1,
-    Number(parts.day),
-    Number(hour),
-    Number(parts.minute),
-    Number(parts.second),
-  );
-  const offsetMin = Math.round((asLocalUTC - date.getTime()) / 60000);
-  const sign = offsetMin >= 0 ? "+" : "-";
-  const abs = Math.abs(offsetMin);
-  const oh = String(Math.floor(abs / 60)).padStart(2, "0");
-  const om = String(abs % 60).padStart(2, "0");
-  return `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}:${parts.second}${sign}${oh}:${om}`;
+  const offset = parseLongOffset(parts.timeZoneName ?? "");
+  // RFC3339 renders a zero UTC offset as the literal "Z", not "+00:00".
+  const zone = offset === "+00:00" ? "Z" : offset;
+  return `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}:${parts.second}${zone}`;
 }
 
 /** Current time in `city` (only "New York" / "Tokyo") as RFC3339. */

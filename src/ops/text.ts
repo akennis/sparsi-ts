@@ -1,6 +1,6 @@
 /** String helpers, composed inside op functions. */
 
-import { formatGoFloat } from "./num";
+import { numberToString } from "./num";
 
 export const concat = (...parts: string[]): string => parts.join("");
 export const join = (xs: string[], sep = ""): string => xs.join(sep);
@@ -21,10 +21,9 @@ export function template(tpl: string, vars: Record<string, unknown>): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Faithful Go op catalog (sparsi-go library/string_ops.go, string_cast_ops.go).
-// Each function mirrors a registered Go operator's Run() semantics and error
-// wording exactly. The `*Description` constants are the user-facing op docs
-// (verbatim from Go).
+// String op catalog: lookup / lowercase / concat / split / regex match & extract,
+// plus the string-cast ops. The `*Description` constants are the user-facing op
+// docs.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── String ───────────────────────────────────────────────────────────────────
@@ -47,15 +46,15 @@ export const RegexExtractOpDescription =
 /** Looks up `key` in `entries`; returns "" on miss (mirrors a nil/missing key). */
 export function stringLookup(
   entries: Record<string, string>,
-  key: string | undefined,
+  key: string | null | undefined,
 ): string {
-  if (key === undefined) return "";
+  if (key == null) return "";
   return entries[key] ?? "";
 }
 
-/** Lowercases `value`; an undefined input yields "" (Go leaves Result zero). */
-export const stringToLower = (value: string | undefined): string =>
-  value === undefined ? "" : value.toLowerCase();
+/** Lowercases `value`; a nil input yields "". */
+export const stringToLower = (value: string | null | undefined): string =>
+  value == null ? "" : value.toLowerCase();
 
 export const stringConcat = (a: string, b: string): string => a + b;
 
@@ -69,7 +68,13 @@ export function stringSplit(input: string, sep = ","): string[] {
   return out;
 }
 
-/** Compiles `pattern`, throwing the Go Setup error wording on empty/invalid. */
+/**
+ * Compiles `pattern`, throwing a Setup error on an empty or invalid pattern.
+ *
+ * Patterns are compiled with JavaScript's `RegExp`, which supports
+ * backreferences and lookaround and is not guaranteed linear-time; size or
+ * sanitize untrusted patterns accordingly.
+ */
 function compilePattern(opName: string, pattern: string): RegExp {
   if (pattern === "") throw new Error(`${opName}: pattern param is required`);
   try {
@@ -94,23 +99,28 @@ export function regexExtract(pattern: string, input: string): string {
 }
 
 // ── String — cast ────────────────────────────────────────────────────────────
+// JS has a single `number` type, so there is one numberToString cast (rather than
+// separate int/float casts), formatting via native String().
 
-export const Float64ToStringOpDescription =
-  "Float64ToStringOp: formats a float64 as string using %v. Input: Value *float64. Output: Result string.";
-export const IntToStringOpDescription =
-  "IntToStringOp: formats an int as string using %v. Input: Value *int. Output: Result string.";
+export const NumberToStringOpDescription =
+  "NumberToStringOp: formats a number as a string (native JS String). Input: Value *number. Output: Result string.";
 export const BoolToStringOpDescription =
   'BoolToStringOp: formats a bool as string ("true" or "false"). Input: Value *bool. Output: Result string.';
 export const ToStringOpDescription =
-  "ToStringOp: formats any upstream pointer value as string using %v; accepts any pointer type via reflection (escape hatch for custom struct wires). Input: Value (any pointer). Output: Result string.";
+  "ToStringOp: formats any upstream value as a string. Input: Value (any). Output: Result string.";
 
-export const float64ToString = (value: number): string => formatGoFloat(value);
-export const intToString = (value: number): string => String(value);
+/** Re-export of the single numeric→string op, defined in num.ts. */
+export { numberToString };
 export const boolToString = (value: boolean): string => (value ? "true" : "false");
 
-/** Formats any value as Go's `%v` would for common scalar wires. */
+/**
+ * Formats any upstream value as a readable string. Scalars render natively
+ * (`99`, `true`, `hi`); composites are JSON-encoded so an array or object yields
+ * a legible representation (`[1,2,3]`, `{"a":1}`) instead of `1,2,3` /
+ * `[object Object]`.
+ */
 export function toString(value: unknown): string {
-  if (typeof value === "number") return formatGoFloat(value);
-  if (typeof value === "boolean") return value ? "true" : "false";
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }

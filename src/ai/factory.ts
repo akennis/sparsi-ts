@@ -1,11 +1,8 @@
 /**
  * Pluggable AI client factories + provider selection.
  *
- * Faithful port of sparsi-go library/ai_factory.go + the provider-selection half
- * of ai_client.go (`newAICaller`). Go returns raw provider SDK clients
- * (`*anthropic.Client` / `*genai.Client`) and wraps them in per-model callers; in
- * TS the {@link AIClient} interface already abstracts the provider call, so a
- * factory simply returns an {@link AIClient} for a given provider + credential ref.
+ * The {@link AIClient} interface abstracts the provider call, so a factory simply
+ * returns an {@link AIClient} for a given provider + credential ref.
  *
  * SECURITY: the bundled {@link EnvAIClientFactory}'s per-ref cache has NO eviction.
  * Do NOT derive `ref` from per-request / untrusted input (tenant id, user id,
@@ -147,8 +144,8 @@ export interface NewAIClientOptions {
 /**
  * Builds a retry-wrapped {@link AIClient} for the requested provider, resolving
  * credentials through the factory (explicit DI → registry-by-id → process
- * default). Mirrors sparsi-go's `newAICaller`: unknown providers throw, and a
- * non-positive maxRetries skips the retry wrapper.
+ * default). Unknown providers throw, and a non-positive maxRetries skips the
+ * retry wrapper.
  */
 export function newAIClient(opts: NewAIClientOptions = {}): AIClient {
   const provider = opts.provider ?? "claude";

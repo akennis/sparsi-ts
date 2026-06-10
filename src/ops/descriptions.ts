@@ -1,10 +1,13 @@
 /**
- * Faithful port of sparsi-go library/descriptions.go `AllDescriptions()`.
+ * Aggregates the catalog op descriptions into one formatted string, organized by
+ * group. The AI, Retrieval, and MCP groups are contributed by their respective
+ * modules (ai/, rag/, mcp/), which are REQUIRED dependencies — they are imported
+ * unconditionally below, so this aggregator (and index.ts's allDescriptions) hard-
+ * depends on them.
  *
- * Returns a formatted string listing all library op descriptions, organized by
- * group, in the exact order and format the Go library emits. The AI, Retrieval,
- * and MCP groups are contributed by their respective modules (ai/, rag/, mcp/)
- * and are spliced in at their Go positions once those modules are present.
+ * The numeric op groups are collapsed under a single `number` type — there are no
+ * separate int/float "Math", "Predicate", or select/default groups, because JS has
+ * one numeric type.
  */
 
 import * as num from "./num";
@@ -25,49 +28,30 @@ interface DescriptionGroup {
   descs: string[];
 }
 
-/** The deterministic op groups, in the exact order Go's AllDescriptions lists them. */
+/** The deterministic op groups, in catalog order. */
 export const descriptionGroups: DescriptionGroup[] = [
   {
-    header: "## Math — float",
+    header: "## Math",
     descs: [
-      num.AddFloatOpDescription,
-      num.SubFloatOpDescription,
-      num.MulFloatOpDescription,
-      num.DivFloatOpDescription,
-      num.PowFloatOpDescription,
-      num.ModFloatOpDescription,
+      num.AddOpDescription,
+      num.SubOpDescription,
+      num.MulOpDescription,
+      num.DivOpDescription,
+      num.PowOpDescription,
+      num.ModOpDescription,
       num.RoundOpDescription,
-      num.ClampFloatOpDescription,
-      num.SumFloatOpDescription,
-      num.MinFloatOpDescription,
-      num.MaxFloatOpDescription,
+      num.ClampOpDescription,
+      num.TruncOpDescription,
+      num.SumOpDescription,
+      num.MinOpDescription,
+      num.MaxOpDescription,
       num.PackMathOperandsOpDescription,
     ],
   },
   {
-    header: "## Math — int",
-    descs: [
-      num.AddIntOpDescription,
-      num.SubIntOpDescription,
-      num.MulIntOpDescription,
-      num.DivIntOpDescription,
-      num.PowIntOpDescription,
-      num.ModIntOpDescription,
-      num.SumIntOpDescription,
-      num.ClampIntOpDescription,
-      num.MinIntOpDescription,
-      num.MaxIntOpDescription,
-    ],
-  },
-  {
-    header: "## Math — cast",
-    descs: [num.IntToFloat64OpDescription, num.Float64ToIntOpDescription],
-  },
-  {
     header: "## String — cast",
     descs: [
-      text.Float64ToStringOpDescription,
-      text.IntToStringOpDescription,
+      text.NumberToStringOpDescription,
       text.BoolToStringOpDescription,
       text.ToStringOpDescription,
     ],
@@ -92,23 +76,13 @@ export const descriptionGroups: DescriptionGroup[] = [
     ],
   },
   {
-    header: "## Predicate — float",
+    header: "## Predicate — numeric",
     descs: [
-      predicate.IfFloatGtOpDescription,
-      predicate.IfFloatLtOpDescription,
-      predicate.IfFloatEqOpDescription,
-      predicate.IfFloatGeOpDescription,
-      predicate.IfFloatLeOpDescription,
-    ],
-  },
-  {
-    header: "## Predicate — int",
-    descs: [
-      predicate.IfIntGtOpDescription,
-      predicate.IfIntLtOpDescription,
-      predicate.IfIntEqOpDescription,
-      predicate.IfIntGeOpDescription,
-      predicate.IfIntLeOpDescription,
+      predicate.IfGtOpDescription,
+      predicate.IfLtOpDescription,
+      predicate.IfEqOpDescription,
+      predicate.IfGeOpDescription,
+      predicate.IfLeOpDescription,
     ],
   },
   {
@@ -126,21 +100,19 @@ export const descriptionGroups: DescriptionGroup[] = [
     descs: [
       predicate.IfEmptyStringOpDescription,
       predicate.IfEmptySliceStringOpDescription,
-      predicate.IfEmptySliceFloat64OpDescription,
-      predicate.BetweenFloatOpDescription,
+      predicate.IfEmptySliceNumberOpDescription,
+      predicate.BetweenOpDescription,
     ],
   },
   {
     header: "## Select / Switch / Default",
     descs: [
       select.SelectStringOpDescription,
-      select.SelectFloat64OpDescription,
-      select.SelectIntOpDescription,
+      select.SelectNumberOpDescription,
       select.SelectBoolOpDescription,
       select.SwitchStringOpDescription,
       select.DefaultStringOpDescription,
-      select.DefaultFloat64OpDescription,
-      select.DefaultIntOpDescription,
+      select.DefaultNumberOpDescription,
     ],
   },
   {
@@ -200,7 +172,7 @@ export const descriptionGroups: DescriptionGroup[] = [
   },
 ];
 
-/** Renders the given groups in Go's AllDescriptions format. */
+/** Renders the given groups in the catalog format. */
 export function renderDescriptions(groups: DescriptionGroup[]): string {
   let out = "";
   groups.forEach((g, i) => {

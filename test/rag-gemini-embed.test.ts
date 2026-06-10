@@ -1,6 +1,5 @@
 /**
- * Tests for the rag-gemini-embed example — behavioral parity with the Go
- * package's embed_retriever_test.go.
+ * Tests for the rag-gemini-embed example's embedding-backed retriever.
  *
  * A fake EmbeddingClientFactory maps text to a deterministic, L2-normalized
  * bag-of-words vector (FNV-1a hash buckets, stopwords filtered). Cosine
@@ -37,7 +36,7 @@ const KB_DIR = join(__dirname, "..", "examples", "testdata", "kb");
 
 // ─── Fake bag-of-words embedding factory ────────────────────────────────────
 
-/** FNV-1a 32-bit over the UTF-8 bytes of `s` (mirrors Go's hash/fnv New32a). */
+/** FNV-1a 32-bit over the UTF-8 bytes of `s`. */
 function fnv1a32(s: string): number {
   let hash = 0x811c9dc5; // 2166136261
   for (const b of new TextEncoder().encode(s)) {
@@ -47,7 +46,7 @@ function fnv1a32(s: string): number {
   return hash >>> 0;
 }
 
-// Same stopword set as the Go test, so common-word noise doesn't drown the signal.
+// Stopword set so common-word noise doesn't drown the signal.
 const STOPWORDS = new Set<string>([
   "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for",
   "from", "has", "have", "how", "i", "in", "is", "it", "its", "of", "on", "or",
@@ -76,8 +75,7 @@ function bagOfWordsVector(text: string, dim: number): number[] {
 
 /**
  * Hands out clients that embed via {@link bagOfWordsVector}. `calls` counts the
- * total number of texts embedded across every client it produced (matching the
- * Go factory's shared atomic counter).
+ * total number of texts embedded across every client it produced.
  */
 class FakeEmbeddingFactory implements EmbeddingClientFactory {
   calls = 0;

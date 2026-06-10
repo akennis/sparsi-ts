@@ -1,8 +1,7 @@
 /**
  * AI example — `withRepair`, an AI-driven recovery wrapper around deterministic ops.
  *
- * Faithful port of sparsi-go examples/with-repair/main.go. A raw JSON support
- * ticket flows through two repair-wrapped stages:
+ * A raw JSON support ticket flows through two repair-wrapped stages:
  *
  *  1. parse_ticket — string-target repair. JSON-decodes the raw text into a
  *     strict TicketInput. On JSON syntax errors or schema violations it throws
@@ -16,8 +15,7 @@
  *     TicketInput, and re-runs the validator.
  *
  * Both wire-format paths of the wrapper (string repair and XML-struct repair) are
- * exercised in one workflow. The Go `-mcp` stdio-server wrapper is intentionally
- * omitted (§6g: the MCP-server wrapper is optional); this is a clean CLI.
+ * exercised in one workflow. A clean CLI.
  *
  * A clean ticket needs zero LLM calls (the inner op succeeds first try), so it
  * runs fully offline. Dirty inputs trigger repair and need CLAUDE_API_KEY.
@@ -28,6 +26,7 @@
 import { readFileSync } from "node:fs";
 import { Workflow, ai } from "../src";
 import { ErrRepairable } from "../src/ai";
+import { escapeXmlText } from "./rag-common";
 
 // ─── Domain type ────────────────────────────────────────────────────────────
 
@@ -39,7 +38,7 @@ interface TicketInput {
   escalation_contact?: string;
 }
 
-// ─── Schema (verbatim from the Go consts) ───────────────────────────────────
+// ─── Schema ─────────────────────────────────────────────────────────────────
 
 const ID_PATTERN = /^T-\d+$/;
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -67,36 +66,31 @@ function stripCodeFences(s: string): string {
   return s.trim();
 }
 
-/** Go %q-style quoting for violation messages. */
+/** Quotes a string for violation messages. */
 const q = (s: string): string => JSON.stringify(s);
-
-function xmlEscape(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 function xmlUnescape(s: string): string {
   return s
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&quot;|&#34;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#x9;/g, "\t")
+    .replace(/&#xA;/g, "\n")
+    .replace(/&#xD;/g, "\r")
     .replace(/&amp;/g, "&");
 }
 
-/** Renders a ticket as indented XML, the analog of Go's xml.MarshalIndent. */
+/** Renders a ticket as indented XML, escaping element text exactly as
+ * encoding/xml does (`"`→`&#34;`, control chars→hex char refs). */
 function renderTicketXML(t: TicketInput): string {
   let xml = "<ticket>\n";
-  xml += `  <id>${xmlEscape(t.id)}</id>\n`;
-  xml += `  <priority>${xmlEscape(t.priority)}</priority>\n`;
-  xml += `  <reporter_email>${xmlEscape(t.reporter_email)}</reporter_email>\n`;
-  xml += `  <summary>${xmlEscape(t.summary)}</summary>\n`;
+  xml += `  <id>${escapeXmlText(t.id)}</id>\n`;
+  xml += `  <priority>${escapeXmlText(t.priority)}</priority>\n`;
+  xml += `  <reporter_email>${escapeXmlText(t.reporter_email)}</reporter_email>\n`;
+  xml += `  <summary>${escapeXmlText(t.summary)}</summary>\n`;
   if (t.escalation_contact && t.escalation_contact.trim() !== "") {
-    xml += `  <escalation_contact>${xmlEscape(t.escalation_contact)}</escalation_contact>\n`;
+    xml += `  <escalation_contact>${escapeXmlText(t.escalation_contact)}</escalation_contact>\n`;
   }
   xml += "</ticket>";
   return xml;
@@ -142,7 +136,7 @@ function schemaViolations(t: TicketInput): string[] {
 }
 
 /** Coerces a parsed JSON value into the strict TicketInput shape (unknown keys
- * ignored, missing fields default to ""), the analog of Go json.Unmarshal. */
+ * ignored, missing fields default to ""). */
 function coerce(obj: unknown): TicketInput {
   const o = (obj ?? {}) as Record<string, unknown>;
   const str = (k: string): string => (typeof o[k] === "string" ? (o[k] as string) : "");
@@ -195,9 +189,10 @@ function validateRouting(t: TicketInput): TicketInput {
       new Error("urgent ticket missing escalation_contact"),
     );
   }
-  if (t.summary.length > 280) {
+  const summaryBytes = Buffer.byteLength(t.summary, "utf8");
+  if (summaryBytes > 280) {
     throw new ErrRepairable(
-      `The ticket below has a summary longer than 280 characters (${t.summary.length}). ` +
+      `The ticket below has a summary longer than 280 characters (${summaryBytes}). ` +
         `Rewrite the summary to be at most 280 characters while preserving the technical detail. ` +
         `Output the corrected ticket as XML using the same root element <ticket> and the same child elements. ` +
         `No code fences, no commentary.\n\nInput:\n${renderTicketXML(t)}`,

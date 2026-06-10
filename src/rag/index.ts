@@ -1,5 +1,5 @@
 /**
- * RAG / retrieval surface, ported from sparsi-go's retriever + retrieval ops.
+ * RAG / retrieval surface: the Retriever contract, registry, and retrieval ops.
  * See the individual modules for behavior and SECURITY notes.
  */
 

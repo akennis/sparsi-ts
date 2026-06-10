@@ -2,14 +2,11 @@
  * MCP session + SDK transport construction — the layer that touches the
  * `@modelcontextprotocol/sdk`.
  *
- * Faithful port of sparsi-go's mcp_client.go (mcpSession, buildTransport,
- * httpClientWithHeaders/headerInjectingTransport, startMCPSessionFromSpec,
- * callTool, close) and the MCPSession/MCPToolError surface from
- * mcp_script_op.go. Go's `*exec.Cmd` bound to ctx and `*http.Client` with a
- * header-injecting RoundTripper become, respectively, the SDK's
- * StdioClientTransport and a StreamableHTTPClientTransport with a header-injecting
- * `fetch`. The SDK is reached only through its public `.js` subpaths so the code
- * both typechecks under classic module resolution and runs under CommonJS.
+ * A subprocess bound to an abort signal and an HTTP client with a header-injecting
+ * RoundTripper map onto, respectively, the SDK's StdioClientTransport and a
+ * StreamableHTTPClientTransport with a header-injecting `fetch`. The SDK is reached
+ * only through its public `.js` subpaths so the code both typechecks under classic
+ * module resolution and runs under CommonJS.
  *
  * A module-level session-factory seam ({@link createMCPSession} /
  * {@link setMCPSessionFactory}) lets tests inject fake in-memory sessions while
@@ -17,10 +14,7 @@
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import {
-  StdioClientTransport,
-  getDefaultEnvironment,
-} from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport, FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
@@ -31,8 +25,12 @@ import { mcpLabel, type MCPTransportSpec } from "./transport";
 export interface MCPCallOutcome {
   /** Concatenated text content (TextContent blocks joined with "\n"). */
   text: string;
-  /** Structured content object, or undefined if the tool emitted none. */
-  structured?: Record<string, unknown>;
+  /**
+   * Structured content as arbitrary decoded JSON (object/array/scalar), or
+   * undefined if the tool emitted none — it can hold any JSON value, not only
+   * objects.
+   */
+  structured?: unknown;
   /** True when the server reported a tool-level error (CallToolResult.isError). */
   isToolError: boolean;
 }
@@ -55,8 +53,7 @@ export interface MCPSession {
 /**
  * Thrown by {@link mcpScript}'s session adapter when the server reports a
  * tool-level error (isError=true). Scripts can `instanceof`-check this to recover
- * from anticipated failures (e.g. element-not-found on a click). Mirrors Go's
- * `*MCPToolError`.
+ * from anticipated failures (e.g. element-not-found on a click).
  */
 export class MCPToolError extends Error {
   constructor(
@@ -72,7 +69,7 @@ export class MCPToolError extends Error {
 function splitCallToolResult(res: unknown): MCPCallOutcome {
   const r = (res ?? {}) as {
     content?: unknown;
-    structuredContent?: Record<string, unknown>;
+    structuredContent?: unknown;
     isError?: boolean;
   };
   const parts: string[] = [];
@@ -122,8 +119,8 @@ export class RealMCPSession implements MCPSession {
 /**
  * Applies each `KEY=VALUE` header to `target`, but only when the header is not
  * already present — so the SDK can still set protocol headers (e.g.
- * Mcp-Session-Id) without the static auth layer stomping on them. Mirrors Go's
- * `headerInjectingTransport.RoundTrip`. Exported for direct unit testing.
+ * Mcp-Session-Id) without the static auth layer stomping on them. Exported for
+ * direct unit testing.
  */
 export function applyStaticHeaders(target: Headers, headers: string[]): Headers {
   for (const h of headers) {
@@ -147,21 +144,30 @@ function headerInjectingFetch(headers: string[]): FetchLike {
 /** Builds the SDK transport implied by the spec. */
 export function buildTransport(spec: MCPTransportSpec): Transport {
   if (spec.kind === "stdio") {
-    // The SDK defaults env to a safe subset (getDefaultEnvironment); when the
-    // spec adds vars, merge them on top of that subset so configured values are
-    // present without dropping the safe defaults. Go appended to os.Environ();
-    // this is the idiomatic, safer SDK equivalent.
+    // Append spec.env onto the FULL process environment so the child inherits the
+    // parent's environment. The SDK would otherwise default to a reduced safe
+    // subset (getDefaultEnvironment), breaking stdio servers that depend on an
+    // inherited variable outside that subset. Pass process.env (filtered to defined
+    // string values) as the base instead.
     const extras = kvArrayToRecord(spec.env);
-    const hasExtras = Object.keys(extras).length > 0;
     return new StdioClientTransport({
       command: spec.command,
       args: spec.args,
-      ...(hasExtras ? { env: { ...getDefaultEnvironment(), ...extras } } : {}),
+      env: { ...definedStringEnv(process.env), ...extras },
     });
   }
   const opts: ConstructorParameters<typeof StreamableHTTPClientTransport>[1] = {};
   if (spec.headers.length > 0) opts.fetch = headerInjectingFetch(spec.headers);
   return new StreamableHTTPClientTransport(new URL(spec.url), opts);
+}
+
+/** The process env with undefined entries dropped. */
+function definedStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
 }
 
 function kvArrayToRecord(kv: string[]): Record<string, string> {
@@ -176,8 +182,8 @@ function kvArrayToRecord(kv: string[]): Record<string, string> {
 
 /**
  * Builds the transport described by `spec` and connects an MCP client over it.
- * `initTimeoutMs <= 0` means no handshake timeout. Mirrors Go's
- * startMCPSessionFromSpec, including the `connect <label>: <err>` wrap.
+ * `initTimeoutMs <= 0` means no handshake timeout. On failure it wraps the error
+ * as `connect <label>: <err>`.
  */
 export async function startMCPSessionFromSpec(
   spec: MCPTransportSpec,

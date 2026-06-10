@@ -1,15 +1,13 @@
 /**
  * Process-global warm-replenish MCP session pool.
  *
- * Faithful port of sparsi-go's mcp_pool.go. Go's mutex-guarded entries +
- * replenishment goroutines + sync.WaitGroup become, in single-threaded JS,
- * plain mutations (no lock needed — there are no preemptive data races) +
- * async background replenishment tasks tracked in a `pending` set (the WaitGroup
- * analog). Behavior is preserved: warm slots keyed by canonical spec+init
- * timeout; LIFO `ready` stack; each borrow is fresh and never returned; topUp
- * replenishes deficit = targetN − ready − inflight; bounded-backoff replenish
- * (500ms → cap 30s) retrying until shutdown; pool-size convergence to the max
- * requested; graceful degradation to direct start after shutdown.
+ * Single-threaded JS needs no locks (there are no preemptive data races): entries
+ * are mutated in place, and background replenishment runs as async tasks tracked
+ * in a `pending` set so shutdown can await them. Warm slots are keyed by canonical
+ * spec + init timeout; a LIFO `ready` stack hands out borrows (each fresh, never
+ * returned); topUp replenishes deficit = targetN − ready − inflight; replenish
+ * uses bounded backoff (500ms → cap 30s) retrying until shutdown; pool size
+ * converges to the max requested; after shutdown it degrades to direct start.
  *
  * Sessions are produced through the {@link createMCPSession} factory seam, so a
  * test-installed factory drives both the ops and the pool.
@@ -86,9 +84,9 @@ class MCPPool {
    * session before resolving. Decrements inflight on exactly one terminal path.
    */
   private async replenishWorker(e: MCPPoolEntry): Promise<void> {
-    // Yield before any work so the worker behaves like Go's `go replenishWorker`:
-    // scheduling it must not run the session factory inline on the caller's
-    // synchronous frame (e.g. inside acquire's hot path). Without this, invoking
+    // Yield before any work so scheduling the worker does not run the session
+    // factory inline on the caller's synchronous frame (e.g. inside acquire's hot
+    // path). Without this, invoking
     // the async function would execute its prologue — including the factory
     // call — up to the first await, synchronously, before acquire returns.
     await Promise.resolve();
@@ -187,7 +185,7 @@ export function prewarmMCPPool(
  * acquire falls through to direct start (graceful degradation).
  *
  * Pass `{ signal }` to bound the wait: if it aborts before the tasks settle, a
- * timeout error is thrown (mirrors Go's ctx-deadline path).
+ * timeout error is thrown.
  */
 export async function shutdownMCPPool(opts: { signal?: AbortSignal } = {}): Promise<void> {
   const p = globalPool;
@@ -229,7 +227,7 @@ export async function shutdownMCPPool(opts: { signal?: AbortSignal } = {}): Prom
       finish(() =>
         reject(
           new Error(
-            `ShutdownMCPPool: timed out waiting for replenishment goroutines: ${
+            `ShutdownMCPPool: timed out waiting for replenishment tasks: ${
               signal.reason instanceof Error ? signal.reason.message : String(signal.reason ?? "aborted")
             }`,
           ),

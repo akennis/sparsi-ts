@@ -1,13 +1,11 @@
 /**
  * WithRepair: AI-driven recovery wrapper around a deterministic op.
  *
- * Faithful port of sparsi-go library/with_repair.go, expressed idiomatically as
- * a typed higher-order function over an inner op rather than Go's reflection-based
- * IOperator/SetInputField/UnmarshalRepair scaffolding. The behavioral contract is
- * identical: the inner op signals a fixable, structural failure by throwing
- * {@link ErrRepairable}; the wrapper forwards `promptPrefix + prompt + promptSuffix`
- * to the LLM with a strict system text, deserializes the response into a fresh
- * input via the typed `parse` callback, and re-runs the inner op with it.
+ * Expressed as a typed higher-order function over an inner op: the inner op
+ * signals a fixable, structural failure by throwing {@link ErrRepairable}; the
+ * wrapper forwards `promptPrefix + prompt + promptSuffix` to the LLM with a strict
+ * system text, deserializes the response into a fresh input via the typed `parse`
+ * callback, and re-runs the inner op with it.
  */
 
 import type { RunContext } from "../types";
@@ -15,17 +13,17 @@ import { requireAI } from "./client";
 import { ErrRepairable } from "./compute";
 
 export const WithRepairDescription = `WithRepair: AI-driven recovery wrapper around a deterministic op.
-  Mechanism: When the wrapped op throws library.ErrRepairable, the wrapper
-             forwards the error's prompt verbatim (sandwiched by a configured
+  Mechanism: When the wrapped op throws ErrRepairable, the wrapper forwards the
+             error's prompt verbatim (sandwiched by a configured
              promptPrefix/promptSuffix) to the LLM, parses the response into a
              fresh input value via the configured parse callback, and re-runs the
              inner op with that value. Up to maxAttempts repair cycles per run;
              non-repairable errors are propagated unchanged.
   Inner contract:
-             - The inner op throws library.ErrRepairable when the failure is
-               structural and fixable by an LLM mutation of its input.
+             - The inner op throws ErrRepairable when the failure is structural
+               and fixable by an LLM mutation of its input.
              - The parse callback deserializes the LLM response into the inner
-               op's input type (the analog of Go's RepairableInput.UnmarshalRepair).
+               op's input type.
              - The inner op MUST be idempotent or pure — repair retries re-run it.
   Config:    maxAttempts number — repair cycle budget (default 3).
              model       string — model passed to the provider (default "claude-sonnet-4-6").
@@ -33,7 +31,7 @@ export const WithRepairDescription = `WithRepair: AI-driven recovery wrapper aro
              promptPrefix/promptSuffix string — wrap the repair prompt verbatim.
   Inputs/Outputs: identical to the wrapped inner op.`;
 
-/** Verbatim Go system text for the repair LLM call (with_repair.go Run). */
+/** System text for the repair LLM call. */
 const REPAIR_SYSTEM_TEXT =
   "You are a strict data-repair assistant. Output exactly what the user asks for, with no prose, no commentary, and no markdown fences.";
 
@@ -45,9 +43,9 @@ export interface WithRepairConfig<T, O> {
    */
   run: (input: T, ctx: RunContext) => O | Promise<O>;
   /**
-   * Deserializes an LLM repair response into a fresh input value. The analog of
-   * Go's `RepairableInput.UnmarshalRepair`: throw to signal an unparseable
-   * response (the attempt is consumed and the next prompt is augmented).
+   * Deserializes an LLM repair response into a fresh input value. Throw to signal
+   * an unparseable response (the attempt is consumed and the next prompt is
+   * augmented).
    */
   parse: (response: string) => T;
   /** Repair cycle budget. Default 3. */
@@ -66,8 +64,8 @@ export interface WithRepairConfig<T, O> {
 
 /**
  * Runs `cfg.run(input)`; on {@link ErrRepairable} it repairs `input` via the LLM
- * and re-runs, up to `maxAttempts` cycles. Mirrors with_repair.go Run exactly:
- * first-try success makes no LLM call; non-repairable errors propagate unchanged;
+ * and re-runs, up to `maxAttempts` cycles. First-try success makes no LLM call;
+ * non-repairable errors propagate unchanged;
  * an unparseable LLM response consumes an attempt (without re-running the inner op)
  * and augments the next prompt; exhaustion throws a "repair attempt(s) exhausted"
  * error wrapping the last failure.
@@ -135,8 +133,7 @@ export async function withRepair<T, O>(
         node: tag,
         reasoning: `repaired after ${attempt} attempt(s)`,
         result: out,
-        // Go's WithRepair Inputs snapshot is {name, input_field, max_attempts};
-        // `input_field` is a reflection field name with no typed-TS analogue.
+        // Input snapshot for the reasoning record.
         inputs: { name, max_attempts: maxAttempts },
       });
       return out;

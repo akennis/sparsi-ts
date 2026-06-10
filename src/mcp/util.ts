@@ -2,8 +2,8 @@
 
 /**
  * Resolves after `ms`, or immediately when `signal` aborts. Never rejects — the
- * caller inspects `aborted` to decide whether to stop (the idiomatic equivalent
- * of Go's `select { case <-ctx.Done(): ...; case <-time.After(d): }`).
+ * caller inspects `aborted` to decide whether to stop: a race between a delay
+ * timer and the abort signal, whichever fires first.
  */
 export function sleepOrAbort(
   ms: number,
@@ -35,7 +35,7 @@ export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Builds the error to throw when a run is aborted (mirrors Go's ctx.Err()). */
+/** Builds the error to throw when a run is aborted. */
 export function abortError(signal?: AbortSignal): Error {
   const reason = signal?.reason;
   if (reason instanceof Error) return reason;

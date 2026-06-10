@@ -1,17 +1,15 @@
 /**
  * AI example — a HackerNews topic-brief generator.
  *
- * Faithful port of sparsi-go examples/hn-topic-brief/main.go. Given a search
- * query, it fetches the top HN stories (Algolia API), fans out per-story AI
- * checks over a map node (relevance filter + multi-label classifier), computes
- * the dominant category deterministically, selects a brief style via modeSelect,
- * and produces a structured brief in one of three styles (technical / business /
- * policy) — exactly one lane fires, merged by coalesce.
+ * Given a search query, it fetches the top HN stories (Algolia API), fans out
+ * per-story AI checks over a map node (relevance filter + multi-label classifier),
+ * computes the dominant category deterministically, selects a brief style via
+ * modeSelect, and produces a structured brief in one of three styles (technical /
+ * business / policy) — exactly one lane fires, merged by coalesce.
  *
- * The Go `-mcp` stdio-server wrapper is intentionally omitted (§6g: optional).
  * The `--cache` / `--fixture` offline conveniences are kept; the live fetch /
  * fixture read is resolved here in main(), so the workflow is the pure analysis
- * DAG (the per-story query is closed over by build(), as the Go params embed it).
+ * DAG (the per-story query is closed over by build()).
  *
  * Requires CLAUDE_API_KEY (or ANTHROPIC_API_KEY). `--query` without `--cache`
  * also hits live network.

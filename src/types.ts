@@ -54,15 +54,11 @@ export interface OpOptions {
 /**
  * A single reasoning record captured when an AI op runs in reasoning mode.
  *
- * Mirrors sparsi-go's `library.ReasoningEntry`, idiomatically renamed: `node` is
- * Go's `Op` (the op/node identity — "node" is the term used throughout this
- * engine), `result` is Go's `Output` (the value the op produced), and `inputs`
- * is Go's `Inputs` (a snapshot of the op's input field values at invocation
- * time, keyed by field name — e.g. `{Input, Criterion}` for aiScore). Go's
- * `RunID` (a dagor run id used only to correlate entries with slog output) has
- * no TS analogue: the full set of records is returned directly on
- * {@link RunResult.reasoning} in recording order, so there is no out-of-band log
- * to correlate against.
+ * `node` is the op/node identity, `result` is the value the op produced, and
+ * `inputs` is a snapshot of the op's input field values at invocation time, keyed
+ * by field name — e.g. `{Input, Criterion}` for aiScore. The full set of records
+ * is returned directly on {@link RunResult.reasoning} in recording order, so
+ * there is no out-of-band log to correlate against.
  */
 export interface ReasoningEntry {
   node: string;

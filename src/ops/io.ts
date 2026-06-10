@@ -8,6 +8,11 @@ export const readFile = (path: string): Promise<string> =>
 export const writeFile = (path: string, content: string): Promise<void> =>
   fsWrite(path, content, "utf8");
 
+/**
+ * CONVENIENCE helper (not the catalog op): returns `undefined` for an unset var.
+ * The catalog EnvOp is {@link getEnv}, which returns "" on miss — pick that when
+ * you want the op semantics. These intentionally differ on the unset case.
+ */
 export const env = (name: string): string | undefined => process.env[name];
 
 export function print(...args: unknown[]): void {
@@ -27,9 +32,8 @@ export function readStdin(): Promise<string> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Faithful Go op catalog (sparsi-go library/io_ops.go). Each function mirrors a
-// registered Go operator's Run() semantics and error wording exactly. The
-// `*Description` constants are verbatim from Go.
+// IO op catalog: file read, env var read, HTTP GET. The `*Description` constants
+// are the user-facing op docs.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const FileReadOpDescription =
@@ -39,7 +43,7 @@ export const EnvOpDescription =
 export const HTTPGetOpDescription =
   "HTTPGetOp: performs an HTTP GET request. Input: URL *string. Outputs: Body string, StatusCode int.";
 
-/** User-Agent string HTTPGetOp sends, verbatim from the Go op. */
+/** User-Agent string HTTPGetOp sends. */
 const HTTP_GET_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 

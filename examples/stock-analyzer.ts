@@ -2,12 +2,10 @@
  * AI example (Gemini) — fetch a live quote + news headline for a stock ticker,
  * score the headline's sentiment, and produce a Buy/Hold/Sell recommendation.
  *
- * Faithful port of sparsi-go examples/stock-analyzer/main.go. The Go program's
- * dual-mode `-mcp` stdio-server wrapper is intentionally omitted (see §6g: the
- * MCP-server wrapper is optional); this is a clean one-shot CLI over the same
- * workflow. The DAG fans out to two live Yahoo Finance endpoints in parallel,
- * extracts fields, AI-parses the prices, computes the change deterministically,
- * AI-scores sentiment, and runs a final AI string→string recommendation.
+ * A clean one-shot CLI: the DAG fans out to two live Yahoo Finance endpoints in
+ * parallel, extracts fields, AI-parses the prices, computes the change
+ * deterministically, AI-scores sentiment, and runs a final AI string→string
+ * recommendation.
  *
  * Requires GEMINI_API_KEY. Hits live network (Yahoo Finance).
  *   npm run example:stock -- --ticker AAPL
@@ -16,7 +14,7 @@ import { Workflow, ai, ops } from "../src";
 
 const MODEL = "gemini-3-flash-preview";
 
-// Yahoo Finance endpoints (verbatim from the Go RegisterConst fragments).
+// Yahoo Finance endpoints.
 const QUOTE_PREFIX = "https://query2.finance.yahoo.com/v8/finance/chart/";
 const QUOTE_SUFFIX = "?interval=1d&range=1d";
 const NEWS_PREFIX = "https://query2.finance.yahoo.com/v1/finance/search?q=";
@@ -66,7 +64,7 @@ function build() {
 
   // Deterministic change.
   const change = wf.op({ price, prevClose }, ({ price, prevClose }) =>
-    ops.num.subFloat(price, prevClose), { name: "calc_change" });
+    ops.num.sub(price, prevClose), { name: "calc_change" });
 
   // AI sentiment in [0,1].
   const sentiment = wf.op({ headline }, ({ headline }, ctx) =>
@@ -78,16 +76,16 @@ function build() {
     { name: "sentiment" },
   );
 
-  // Build the final prompt (Go chains StringConcatOp; here one op, same fragments
-  // and the same Go %v float formatting for change + sentiment).
+  // Build the final prompt in one op, with default float formatting for change +
+  // sentiment.
   const finalPrompt = wf.op(
     { ticker, priceRaw, change, headline, sentiment },
     ({ ticker, priceRaw, change, headline, sentiment }) =>
       PROMPT_HEADER + ticker +
       PROMPT_PRICE + priceRaw +
-      PROMPT_CHANGE + ops.text.float64ToString(change) +
+      PROMPT_CHANGE + ops.text.numberToString(change) +
       PROMPT_HEADLINE + headline +
-      PROMPT_SENTIMENT + ops.text.float64ToString(sentiment) +
+      PROMPT_SENTIMENT + ops.text.numberToString(sentiment) +
       PROMPT_FOOTER,
     { name: "build_prompt" },
   );

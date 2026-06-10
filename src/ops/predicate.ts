@@ -15,49 +15,30 @@ export const between = (x: number, lo: number, hi: number): boolean =>
   x >= lo && x <= hi;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Faithful Go op catalog (sparsi-go library/predicate_ops.go, routing_ops.go).
-// Each function mirrors a registered Go operator's Run() semantics and error
-// wording exactly. The `*Description` constants are verbatim from Go. JS has a
-// single number type, so the float and int comparison variants share one impl.
+// Predicate op catalog, over a single numeric type. JS has one `number` type, so
+// the comparison ops form one numeric if* family. The catalog ops delegate to the
+// generic helpers above.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Predicate — float ────────────────────────────────────────────────────────
+// ── Predicate — numeric ──────────────────────────────────────────────────────
 
-export const IfFloatGtOpDescription =
-  "IfFloatGtOp: reports whether A > B. Inputs: A *float64, B *float64. Output: Match bool.";
-export const IfFloatLtOpDescription =
-  "IfFloatLtOp: reports whether A < B. Inputs: A *float64, B *float64. Output: Match bool.";
-export const IfFloatEqOpDescription =
-  "IfFloatEqOp: reports whether A == B. Inputs: A *float64, B *float64. Output: Match bool.";
-export const IfFloatGeOpDescription =
-  "IfFloatGeOp: reports whether A >= B. Inputs: A *float64, B *float64. Output: Match bool.";
-export const IfFloatLeOpDescription =
-  "IfFloatLeOp: reports whether A <= B. Inputs: A *float64, B *float64. Output: Match bool.";
+export const IfGtOpDescription =
+  "IfGtOp: reports whether A > B. Inputs: A *number, B *number. Output: Match bool.";
+export const IfLtOpDescription =
+  "IfLtOp: reports whether A < B. Inputs: A *number, B *number. Output: Match bool.";
+export const IfEqOpDescription =
+  "IfEqOp: reports whether A == B. Inputs: A *number, B *number. Output: Match bool.";
+export const IfGeOpDescription =
+  "IfGeOp: reports whether A >= B. Inputs: A *number, B *number. Output: Match bool.";
+export const IfLeOpDescription =
+  "IfLeOp: reports whether A <= B. Inputs: A *number, B *number. Output: Match bool.";
 
-export const ifFloatGt = (a: number, b: number): boolean => a > b;
-export const ifFloatLt = (a: number, b: number): boolean => a < b;
-export const ifFloatEq = (a: number, b: number): boolean => a === b;
-export const ifFloatGe = (a: number, b: number): boolean => a >= b;
-export const ifFloatLe = (a: number, b: number): boolean => a <= b;
-
-// ── Predicate — int ──────────────────────────────────────────────────────────
-
-export const IfIntGtOpDescription =
-  "IfIntGtOp: reports whether A > B. Inputs: A *int, B *int. Output: Match bool.";
-export const IfIntLtOpDescription =
-  "IfIntLtOp: reports whether A < B. Inputs: A *int, B *int. Output: Match bool.";
-export const IfIntEqOpDescription =
-  "IfIntEqOp: reports whether A == B. Inputs: A *int, B *int. Output: Match bool.";
-export const IfIntGeOpDescription =
-  "IfIntGeOp: reports whether A >= B. Inputs: A *int, B *int. Output: Match bool.";
-export const IfIntLeOpDescription =
-  "IfIntLeOp: reports whether A <= B. Inputs: A *int, B *int. Output: Match bool.";
-
-export const ifIntGt = (a: number, b: number): boolean => a > b;
-export const ifIntLt = (a: number, b: number): boolean => a < b;
-export const ifIntEq = (a: number, b: number): boolean => a === b;
-export const ifIntGe = (a: number, b: number): boolean => a >= b;
-export const ifIntLe = (a: number, b: number): boolean => a <= b;
+// Catalog ops, delegating to the generic comparison helpers.
+export const ifGt = gt;
+export const ifLt = lt;
+export const ifGe = gte;
+export const ifLe = lte;
+export const ifEq = (a: number, b: number): boolean => a === b;
 
 // ── Predicate — string ───────────────────────────────────────────────────────
 
@@ -77,7 +58,13 @@ export const ifStringHasPrefix = (a: string, b: string): boolean => a.startsWith
 export const ifStringHasSuffix = (a: string, b: string): boolean => a.endsWith(b);
 export const ifStringEq = (a: string, b: string): boolean => a === b;
 
-/** Reports whether `input` matches `pattern`. Pattern is required. */
+/**
+ * Reports whether `input` matches `pattern`. Pattern is required.
+ *
+ * Patterns are compiled with JavaScript's `RegExp`, which supports
+ * backreferences and lookaround and is not guaranteed linear-time; size or
+ * sanitize untrusted patterns accordingly.
+ */
 export function ifStringRegexMatch(pattern: string, input: string): boolean {
   if (pattern === "")
     throw new Error("IfStringRegexMatchOp: pattern param is required");
@@ -98,17 +85,16 @@ export const IfEmptyStringOpDescription =
   "IfEmptyStringOp: reports whether Value is nil or the empty string. Input: Value *string. Output: Match bool.";
 export const IfEmptySliceStringOpDescription =
   "IfEmptySliceStringOp: reports whether Value is nil or has length 0. Input: Value *[]string. Output: Match bool.";
-export const IfEmptySliceFloat64OpDescription =
-  "IfEmptySliceFloat64Op: reports whether Value is nil or has length 0. Input: Value *[]float64. Output: Match bool.";
-export const BetweenFloatOpDescription =
-  "BetweenFloatOp: reports whether Min <= Value <= Max (inclusive on both ends). Inputs: Value *float64, Min *float64, Max *float64. Output: Match bool.";
+export const IfEmptySliceNumberOpDescription =
+  "IfEmptySliceNumberOp: reports whether Value is nil or has length 0. Input: Value *[]number. Output: Match bool.";
+export const BetweenOpDescription =
+  "BetweenOp: reports whether Min <= Value <= Max (inclusive on both ends). Inputs: Value *number, Min *number, Max *number. Output: Match bool.";
 
-export const ifEmptyString = (value: string | undefined): boolean =>
-  value === undefined || value === "";
-export const ifEmptySliceString = (value: string[] | undefined): boolean =>
-  value === undefined || value.length === 0;
-export const ifEmptySliceFloat64 = (value: number[] | undefined): boolean =>
-  value === undefined || value.length === 0;
+export const ifEmptyString = (value: string | null | undefined): boolean =>
+  value == null || value === "";
+export const ifEmptySliceString = (value: string[] | null | undefined): boolean =>
+  value == null || value.length === 0;
+export const ifEmptySliceNumber = (value: number[] | null | undefined): boolean =>
+  value == null || value.length === 0;
 
-export const betweenFloat = (value: number, min: number, max: number): boolean =>
-  value >= min && value <= max;
+// `between` (defined above) is the single numeric range op.

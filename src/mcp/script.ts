@@ -2,14 +2,11 @@
  * MCPScriptOp: orchestrate a sequence of MCP tool calls against one long-lived
  * MCP session.
  *
- * Faithful port of sparsi-go's mcp_script_op.go, expressed as a typed
- * higher-order function. Go's `Script func(ctx, sess, in, out *Out) error`
- * (populate-out-pointer, return-error) becomes a callback that RETURNS the typed
- * result. Go's `mcpSessionAdapter` (applies the per-call timeout and surfaces
- * MCPToolError on isError) becomes {@link MCPScriptSession}. Behavior is
- * preserved: the Script runs exactly once per Run; only session-START failures
- * retry (bounded backoff, abort-aware); the session is torn down when Script
- * returns; tool-level errors surface as {@link MCPToolError}.
+ * Expressed as a typed higher-order function: the Script callback RETURNS the
+ * typed result. {@link MCPScriptSession} applies the per-call timeout and surfaces
+ * {@link MCPToolError} on isError. The Script runs exactly once per run; only
+ * session-START failures retry (bounded backoff, abort-aware); the session is torn
+ * down when Script returns; tool-level errors surface as {@link MCPToolError}.
  */
 
 import { MCPToolError, type MCPCallOutcome, type MCPSession } from "./client";
@@ -17,38 +14,35 @@ import { acquireMCPSession, prewarmMCPPool } from "./pool";
 import { resolveMCPConfig, type MCPConnectionOptions, type MCPResolvedConfig } from "./transport";
 import { abortError, errMsg, sleepOrAbort } from "./util";
 
-/** Verbatim Go description for the catalog (`## MCP` section). */
+/** Description for the catalog (`## MCP` section). */
 export const MCPScriptOpDescription = `MCPScriptOp: orchestrate a sequence of MCP tool calls against a single,
 long-lived MCP session. Use this when one DAG step needs multiple tool calls
 that share server-side state (browser session, file handles, etc.). The
-user-supplied Script callback runs exactly once per Run, receives a
-MCPSession, and is free to invoke CallTool any number of times in any order.
-  Params:   transport       — "stdio" (default) or "http". Selects how the MCP server is reached.
-            stdio params:
+user-supplied Script callback runs exactly once per run, receives a session, and
+is free to invoke callTool any number of times in any order.
+  Options:  transport       — "stdio" (default) or "http". Selects how the MCP server is reached.
+            stdio options:
               command         — server executable (e.g. "npx", "uvx", "/abs/path"). Required.
-              args            — comma-separated CLI args (e.g. "-y,@playwright/mcp@latest"). Optional.
-              env             — comma-separated KEY=VALUE pairs. Optional.
-            http params:
+              args            — string[] of CLI args (e.g. ["-y", "@playwright/mcp@latest"]). Optional.
+              env             — Record<string, string> of extra environment variables. Optional.
+            http options:
               url             — full endpoint URL (http or https). Required.
-              headers         — comma-separated KEY=VALUE pairs injected into every request
-                                (e.g. "Authorization=Bearer \${TOKEN}"). Optional.
-            init_timeout_ms — handshake timeout in ms (default "10000").
-            call_timeout_ms — per-tool-call timeout in ms (default "30000").
-            max_retries     — retries for session-start failures only; the Script runs at most
-                              once per Run (default "3").
-            pool_size       — warm-replenish pool target capacity per session-spec key
-                              (default "0", no pool). Vertices with the same spec share warm
-                              slots; each Run gets a fresh session — sessions are never reused
-                              for a second Run. Only supported for transport="stdio" in v1.
-                              Pair with library.ShutdownMCPPool from main() so pre-started
-                              subprocesses drain at exit.
-            pool_prewarm    — when pool_size > 0, fill the pool during Setup (default "true");
-                              set "false" to fill lazily on first Run.
-  Inputs:   Input *In       — typed input handed to Script.
-  Outputs:  Result Out      — populated by Script.
-Concrete variants embed library.MCPScriptOp[In, Out] in a named struct and
-register via operator.RegisterOpFactory(name, factory), with the Script field
-assigned in the factory closure.`;
+              headers         — Record<string, string> injected into every request
+                                (e.g. { Authorization: "Bearer \${TOKEN}" }). Optional.
+            initTimeoutMs   — handshake timeout in ms (default 10000).
+            callTimeoutMs   — per-tool-call timeout in ms (default 30000).
+            maxRetries      — retries for session-start failures only; the Script runs at most
+                              once per run (default 3).
+            poolSize        — warm-replenish pool target capacity per session-spec key
+                              (default 0, no pool). Vertices with the same spec share warm
+                              slots; each run gets a fresh session — sessions are never reused
+                              for a second run. Only supported for transport "stdio".
+                              Pair with shutdownMCPPool at process exit so pre-started
+                              subprocesses drain.
+            poolPrewarm     — when poolSize > 0, fill the pool during setup (default true);
+                              set false to fill lazily on first run.
+  Input:    input           — typed input handed to Script.
+  Output:   the typed value returned by Script.`;
 
 /**
  * The per-Run session handed to a Script. Each {@link callTool} reuses the same
@@ -72,8 +66,8 @@ export interface MCPScriptOptions<In, Out> extends MCPConnectionOptions {
   script: MCPScriptCallback<In, Out>;
 }
 
-/** Validates options and resolves the shared config (the Setup analog). */
-export function setupMCPScript<In, Out>(
+/** Resolves the shared config and validates the script callback (no side effects). */
+function resolveScriptConfig<In, Out>(
   opts: MCPScriptOptions<In, Out>,
 ): { cfg: MCPResolvedConfig } {
   const cfg = resolveMCPConfig(opts, "MCPScriptOp");
@@ -81,6 +75,21 @@ export function setupMCPScript<In, Out>(
     throw new Error("MCPScriptOp: Script callback is nil — provide opts.script");
   }
   return { cfg };
+}
+
+/**
+ * Validates options, resolves the shared config, and prewarms the pool exactly
+ * once (the setup step). Call this once at workflow-build time; {@link mcpScript}
+ * (the per-run path) never prewarms.
+ */
+export function setupMCPScript<In, Out>(
+  opts: MCPScriptOptions<In, Out>,
+): { cfg: MCPResolvedConfig } {
+  const resolved = resolveScriptConfig(opts);
+  if (resolved.cfg.poolSize > 0 && resolved.cfg.poolPrewarm) {
+    prewarmMCPPool(resolved.cfg.spec, resolved.cfg.initTimeoutMs, resolved.cfg.poolSize);
+  }
+  return resolved;
 }
 
 /** Wraps a raw session with the per-call timeout + MCPToolError surfacing. */
@@ -109,10 +118,9 @@ export async function mcpScript<In, Out>(
   opts: MCPScriptOptions<In, Out>,
   ctx: { signal?: AbortSignal } = {},
 ): Promise<Out> {
-  const { cfg } = setupMCPScript(opts);
-  if (cfg.poolSize > 0 && cfg.poolPrewarm) {
-    prewarmMCPPool(cfg.spec, cfg.initTimeoutMs, cfg.poolSize);
-  }
+  // Per-run path: resolve config but never prewarm — prewarm is a one-time setup
+  // concern (see setupMCPScript). The pool tops up lazily on acquire.
+  const { cfg } = resolveScriptConfig(opts);
   const signal = ctx.signal;
 
   let delay = 500;

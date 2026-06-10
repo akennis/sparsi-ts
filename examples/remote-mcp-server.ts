@@ -1,8 +1,8 @@
 /**
  * MCP example — sparsi's remote (HTTP) MCP transport against a public server.
  *
- * Faithful port of sparsi-go examples/remote-mcp-server/main.go. It queries the
- * public Cloudflare docs MCP server at https://docs.mcp.cloudflare.com/mcp,
+ * It queries the public Cloudflare docs MCP server at
+ * https://docs.mcp.cloudflare.com/mcp,
  * which exposes the `search_cloudflare_documentation` tool over streamable HTTP.
  * No subprocess, no API keys.
  *
@@ -13,9 +13,7 @@
  *
  * Reference: https://github.com/cloudflare/mcp-server-cloudflare/tree/main/apps/docs-vectorize
  *
- * The Go `-mcp` stdio-server wrapper is intentionally omitted (§6g: the dual-mode
- * CLI/MCP-server wrapper is optional); this is a clean CLI entry point. The
- * search query is the workflow input.
+ * A clean CLI entry point: the search query is the workflow input.
  *
  * For private/authenticated remote MCP servers, add a Bearer token (or any other
  * static header) via the `headers` option — they are injected into every request
@@ -25,6 +23,7 @@
  * Prerequisites:
  *   - Network access to docs.mcp.cloudflare.com.
  *   - No CLAUDE_API_KEY required.
+ *     npm run example:remote-mcp                                  # default query
  *     npm run example:remote-mcp -- --query "How do I configure a Worker route?"
  */
 import { Workflow, mcp } from "../src";
@@ -71,11 +70,10 @@ function parseQuery(argv: string[]): string | undefined {
 }
 
 async function main() {
-  const query = parseQuery(process.argv.slice(2));
-  if (!query || query.trim() === "") {
-    console.error("--query is required");
-    process.exit(2);
-  }
+  const parsedQuery = parseQuery(process.argv.slice(2));
+  // Default query so the example runs with no args.
+  const query =
+    parsedQuery?.trim() ? parsedQuery : "How do I configure a Worker route?";
 
   const { wf, searchResults } = build();
   const result = await wf.run({ values: { query } });

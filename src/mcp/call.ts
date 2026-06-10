@@ -1,16 +1,14 @@
 /**
  * MCPCallOp: invoke a single MCP server tool as a DAG step.
  *
- * Faithful port of sparsi-go's mcp_call_op.go, expressed as a typed
- * higher-order function rather than Go's reflection-based IOperator. Go's
- * compile-time `Out` type drives a `parseResultText` type switch; sparsi-ts
- * replaces that reflection with an explicit `output` discriminator (reusing the
- * AI compute OutputKind, plus "json") and an optional `parseResponse` hook (the
- * MCPResponseParser analog). `MCPArgsFormatter` becomes the optional `formatArgs`
- * hook. Behavior is preserved: fresh session per run (unless pooled), encodeArgs
- * (nil → {}), transient-error retry with exponential backoff (500ms → cap 30s,
- * default 3 retries, abort-aware), tool-errors fail immediately (no retry),
- * structured content preferred for object-shaped outputs, and all error wording.
+ * Expressed as a typed higher-order function. The result type is selected by an
+ * explicit `output` discriminator (reusing the AI compute OutputKind, plus
+ * "json") with an optional `parseResponse` hook for full control, and arguments
+ * are marshaled via the optional `formatArgs` hook. Each run opens a fresh
+ * session (unless pooled), encodes args (nil → {}), retries transient errors with
+ * exponential backoff (500ms → cap 30s, default 3 retries, abort-aware), fails
+ * tool-errors immediately (no retry), and prefers structured content for
+ * object-shaped outputs.
  */
 
 import { parseResult, type OutputKind } from "../ai/compute";
@@ -19,37 +17,35 @@ import { resolveMCPConfig, type MCPConnectionOptions, type MCPResolvedConfig } f
 import type { MCPCallOutcome } from "./client";
 import { abortError, errMsg, sleepOrAbort } from "./util";
 
-/** Verbatim Go description for the catalog (`## MCP` section). */
+/** Description for the catalog (`## MCP` section). */
 export const MCPCallOpDescription = `MCPCallOp: invoke a single MCP server tool as a DAG step.
-Each Run opens a fresh session, completes the MCP handshake, calls the tool, and tears the
-session down — unless pool_size > 0 opts into the warm-replenish pool (stdio only in v1).
-  Params:   transport       — "stdio" (default) or "http". Selects how the MCP server is reached.
-            stdio params:
+Each run opens a fresh session, completes the MCP handshake, calls the tool, and tears the
+session down — unless poolSize > 0 opts into the warm-replenish pool (stdio only).
+  Options:  transport       — "stdio" (default) or "http". Selects how the MCP server is reached.
+            stdio options:
               command         — server executable (e.g. "npx", "uvx", "/abs/path"). Required.
-              args            — comma-separated CLI args. Optional.
-              env             — comma-separated KEY=VALUE pairs. Optional.
-            http params:
+              args            — string[] of CLI args. Optional.
+              env             — Record<string, string> of extra environment variables. Optional.
+            http options:
               url             — full endpoint URL (http or https). Required.
-              headers         — comma-separated KEY=VALUE pairs injected into every request
-                                (e.g. "Authorization=Bearer \${TOKEN}"). Optional.
-            tool_name       — MCP tool to invoke. Required.
-            init_timeout_ms — handshake timeout in ms (default "10000").
-            call_timeout_ms — single tool call timeout in ms (default "30000").
-            max_retries     — transient-error retries (default "3").
-            pool_size       — warm-replenish pool target capacity per session-spec key
-                              (default "0", no pool). Only supported for transport="stdio".
-                              Pair with library.ShutdownMCPPool from main() so pre-started
-                              subprocesses drain at exit.
-            pool_prewarm    — when pool_size > 0, fill the pool during Setup (default "true").
-  Inputs:   Input *In       — JSON-marshaled as the tool's "arguments" object. Implement
-                              library.MCPArgsFormatter on *In to control marshaling.
-  Outputs:  Result Out      — default dispatch handles string, float64, int, bool,
-                              []string, []float64, []int, map[string]string, and any
-                              struct decodable via json.Unmarshal (structured content
-                              preferred when the server emits it). Implement
-                              library.MCPResponseParser on *Out to fully control parsing.
-Concrete variants embed library.MCPCallOp[In, Out] in a named struct and register via
-operator.RegisterOp[ConcreteOp]() — never register the generic MCPCallOp directly.`;
+              headers         — Record<string, string> injected into every request
+                                (e.g. { Authorization: "Bearer \${TOKEN}" }). Optional.
+            tool            — MCP tool to invoke. Required.
+            initTimeoutMs   — handshake timeout in ms (default 10000).
+            callTimeoutMs   — single tool call timeout in ms (default 30000).
+            maxRetries      — transient-error retries (default 3).
+            poolSize        — warm-replenish pool target capacity per session-spec key
+                              (default 0, no pool). Only supported for transport "stdio".
+                              Pair with shutdownMCPPool at process exit so pre-started
+                              subprocesses drain.
+            poolPrewarm     — when poolSize > 0, fill the pool during setup (default true).
+            output          — built-in result dispatch: "string" (default), "number", "bool",
+                              "string[]", "number[]", or "json" (decodes structured content,
+                              preferred, or parses the text as JSON).
+            formatArgs      — hook to marshal the input into the tool's "arguments" object.
+            parseResponse   — hook for full control of parsing (receives text + structured).
+  Input:    input — marshaled as the tool's "arguments" object (passed as-is unless formatArgs is set).
+  Output:   the parsed tool result, typed by the chosen output kind or parseResponse hook.`;
 
 /** Built-in output dispatch kinds for MCP results ("json" decodes structured/JSON). */
 export type MCPOutputKind = OutputKind | "json";
@@ -64,26 +60,41 @@ export interface MCPCallOptions<In, Out> extends MCPConnectionOptions {
    */
   output?: MCPOutputKind;
   /**
-   * Full control over parsing (the MCPResponseParser analog). Receives the
-   * concatenated text and the raw structured object (undefined if none) and
-   * returns the typed result; skips the built-in dispatch entirely.
+   * Full control over parsing. Receives the concatenated text and the raw
+   * structured object (undefined if none) and returns the typed result; skips the
+   * built-in dispatch entirely.
    */
-  parseResponse?: (text: string, structured: Record<string, unknown> | undefined) => Out;
+  parseResponse?: (text: string, structured: unknown) => Out;
   /**
-   * Controls how `input` is marshaled into the tool's "arguments" object (the
-   * MCPArgsFormatter analog). If unset, a non-null `input` is passed as-is.
+   * Controls how `input` is marshaled into the tool's "arguments" object. If
+   * unset, a non-null `input` is passed as-is.
    */
   formatArgs?: (input: In) => Record<string, unknown>;
 }
 
-/** Validates options and resolves the shared config + tool name (the Setup analog). */
-export function setupMCPCall<In, Out>(
+/** Resolves the shared config + tool name and validates them (no side effects). */
+function resolveCallConfig<In, Out>(
   opts: MCPCallOptions<In, Out>,
 ): { cfg: MCPResolvedConfig; tool: string } {
   const cfg = resolveMCPConfig(opts, "MCPCallOp");
   const tool = (opts.tool ?? "").trim();
   if (tool === "") throw new Error("MCPCallOp: 'tool' param is required");
   return { cfg, tool };
+}
+
+/**
+ * Validates options, resolves the shared config + tool name, and prewarms the
+ * pool exactly once (the setup step). Call this once at workflow-build time;
+ * {@link mcpCall} (the per-run path) never prewarms.
+ */
+export function setupMCPCall<In, Out>(
+  opts: MCPCallOptions<In, Out>,
+): { cfg: MCPResolvedConfig; tool: string } {
+  const resolved = resolveCallConfig(opts);
+  if (resolved.cfg.poolSize > 0 && resolved.cfg.poolPrewarm) {
+    prewarmMCPPool(resolved.cfg.spec, resolved.cfg.initTimeoutMs, resolved.cfg.poolSize);
+  }
+  return resolved;
 }
 
 function encodeArgs<In, Out>(
@@ -99,17 +110,50 @@ function allStringValues(o: Record<string, unknown>): boolean {
   return Object.values(o).every((v) => typeof v === "string");
 }
 
+/**
+ * Coerces already-decoded structured content into the target kind using JSON
+ * (not text) semantics. Returns `undefined` when the structured shape doesn't fit
+ * the kind, so the caller falls back to text parsing.
+ */
+function coerceStructured(kind: MCPOutputKind, v: unknown): { value: unknown } | undefined {
+  const isFiniteNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+  switch (kind) {
+    case "json":
+      // "json" has no fixed target shape to validate against, so any structured
+      // content fits: when present it is always used and never falls through to
+      // text parsing. (The scalar/collection kinds below DO fall through, via an
+      // `undefined` return, when the structured shape doesn't match.)
+      return { value: v };
+    case "string":
+      return typeof v === "string" ? { value: v } : undefined;
+    case "number":
+      return isFiniteNum(v) ? { value: v } : undefined;
+    case "boolean":
+      return typeof v === "boolean" ? { value: v } : undefined;
+    case "string[]":
+      return Array.isArray(v) && v.every((e) => typeof e === "string") ? { value: v } : undefined;
+    case "number[]":
+      return Array.isArray(v) && v.every(isFiniteNum) ? { value: v } : undefined;
+    case "map":
+      return typeof v === "object" && v !== null && !Array.isArray(v) && allStringValues(v as Record<string, unknown>)
+        ? { value: v }
+        : undefined;
+    default:
+      return undefined;
+  }
+}
+
 /** Decodes a tool outcome into the typed result via the configured dispatch. */
 function decodeResult<In, Out>(outcome: MCPCallOutcome, opts: MCPCallOptions<In, Out>): Out {
   if (opts.parseResponse) return opts.parseResponse(outcome.text, outcome.structured);
   const kind: MCPOutputKind = opts.output ?? "string";
 
-  // Structured content is preferred only for object-shaped outputs — mirroring
-  // Go, where json.Unmarshal of a structured object into a scalar/array fails and
-  // falls through to the text path.
+  // Try structured content first for EVERY output kind: JSON-coerce it into the
+  // target shape and use it on success, falling back to text parsing only when the
+  // structured shape doesn't fit.
   if (outcome.structured !== undefined) {
-    if (kind === "json") return outcome.structured as Out;
-    if (kind === "map" && allStringValues(outcome.structured)) return outcome.structured as Out;
+    const coerced = coerceStructured(kind, outcome.structured);
+    if (coerced) return coerced.value as Out;
   }
 
   if (kind === "json") {
@@ -154,10 +198,10 @@ export async function mcpCall<In, Out>(
   opts: MCPCallOptions<In, Out>,
   ctx: { signal?: AbortSignal } = {},
 ): Promise<Out> {
-  const { cfg, tool } = setupMCPCall(opts);
-  if (cfg.poolSize > 0 && cfg.poolPrewarm) {
-    prewarmMCPPool(cfg.spec, cfg.initTimeoutMs, cfg.poolSize);
-  }
+  // Per-run path: resolve config but never prewarm — prewarm is a one-time setup
+  // concern (see setupMCPCall). The pool still tops up lazily on acquire, so direct
+  // mcpCall users remain correct without an explicit setup.
+  const { cfg, tool } = resolveCallConfig(opts);
   const args = encodeArgs(input, opts);
   const signal = ctx.signal;
 

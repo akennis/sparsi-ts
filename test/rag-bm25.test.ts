@@ -1,12 +1,10 @@
 /**
- * Tests for the rag-bm25 example — behavioral parity with the Go package's
- * bm25_test.go, build_rag_prompt_test.go, parse_citations_test.go, and
- * retrieved_sources_test.go.
+ * Tests for the rag-bm25 example: the BM25 retriever, prompt building, citation
+ * parsing, and retrieved-sources helpers.
  *
  * The prompt-building, citation-parsing, and retrieved-sources helpers live in
- * the shared examples/rag-common.ts module (the Go code duplicated them across
- * both rag examples). They are exercised here ONCE; the sibling
- * rag-gemini-embed.test.ts intentionally does NOT re-test them.
+ * the shared examples/rag-common.ts module. They are exercised here ONCE; the
+ * sibling rag-gemini-embed.test.ts intentionally does NOT re-test them.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -54,7 +52,7 @@ function count(haystack: string, needle: string): number {
   return n;
 }
 
-// ─── BM25 retriever (bm25_test.go) ──────────────────────────────────────────
+// ─── BM25 retriever ──────────────────────────────────────────────────────────
 
 test("BM25: top hit matches the obvious query", async () => {
   const r = newTestRetriever();
@@ -118,7 +116,7 @@ test("BM25: concurrent retrieve is safe", async () => {
   );
 });
 
-// ─── buildRagPrompt (build_rag_prompt_test.go) ──────────────────────────────
+// ─── buildRagPrompt ──────────────────────────────────────────────────────────
 
 // A retrieved document whose Content closes its own <passage> tag and opens a
 // synthetic one with attacker instructions must NOT produce a third passage:
@@ -220,7 +218,7 @@ test("buildRagPrompt: ampersands and angle brackets in the body are escaped", ()
   assert.ok(!prompt.includes("&& c > d"), `prompt contains unescaped '&& c > d':\n${prompt}`);
 });
 
-// ─── parseCitations (parse_citations_test.go) ───────────────────────────────
+// ─── parseCitations ──────────────────────────────────────────────────────────
 
 test("parseCitations: standard trailer", () => {
   const p = parseCitations("To return an item, sign in to your account.\n\nSources: returns.txt");
@@ -306,7 +304,7 @@ test("parseCitations: a list below the cap passes through untouched", () => {
   assert.deepEqual(p.sources, ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]);
 });
 
-// ─── retrievedSources + validateCitations (retrieved_sources_test.go) ───────
+// ─── retrievedSources + validateCitations ────────────────────────────────────
 
 test("retrievedSources: union of retrieved sources, de-duplicated, in first-appearance order", () => {
   const docs: Document[] = [

@@ -1,10 +1,8 @@
 /**
  * Deadline plumbing for the RAG ops.
  *
- * Go threads per-op deadlines with `context.WithTimeout` and detects them with
- * `errors.Is(err, context.DeadlineExceeded)`. TS has no ambient context and no
- * `errors.Is`, so we model the same capability with an {@link AbortSignal}-based
- * deadline ({@link withDeadline}) and a sentinel error ({@link DeadlineExceededError})
+ * Per-op deadlines are modeled with an {@link AbortSignal}-based deadline
+ * ({@link withDeadline}) and a sentinel error ({@link DeadlineExceededError})
  * detected by walking the `.cause` chain ({@link isDeadlineExceeded}).
  */
 
@@ -18,8 +16,7 @@ export class DeadlineExceededError extends Error {
 
 /**
  * Reports whether `err` (or anything in its `.cause` chain) is a
- * {@link DeadlineExceededError}. The TS analogue of
- * `errors.Is(err, context.DeadlineExceeded)`.
+ * {@link DeadlineExceededError}.
  */
 export function isDeadlineExceeded(err: unknown): boolean {
   let cur: unknown = err;
@@ -33,13 +30,13 @@ export function isDeadlineExceeded(err: unknown): boolean {
 }
 
 /**
- * Runs `fn` under a deadline, mirroring `context.WithTimeout`. `fn` receives a
- * signal that aborts when `timeoutMs` elapses (with a {@link DeadlineExceededError}
- * reason) or when `parent` aborts (propagating `parent.reason`).
+ * Runs `fn` under a deadline. `fn` receives a signal that aborts when `timeoutMs`
+ * elapses (with a {@link DeadlineExceededError} reason) or when `parent` aborts
+ * (propagating `parent.reason`).
  *
  * A non-positive `timeoutMs` imposes no deadline: `fn` receives `parent`
- * unchanged (or a never-aborting signal when `parent` is absent), matching Go's
- * "0 = honor only the ambient ctx" semantics.
+ * unchanged (or a never-aborting signal when `parent` is absent), so "0" means
+ * "honor only the ambient signal".
  */
 export async function withDeadline<T>(
   timeoutMs: number,

@@ -1,13 +1,10 @@
 /**
- * Retrieval ops, ported from sparsi-go library/retrieve_op.go,
- * retrieve_with_filters_op.go, and validate_citations_op.go.
+ * Retrieval ops: retrieve, retrieveWithFilters, and validateCitations.
  *
- * Go's config.Params string params become a typed options object; Go's
- * context.WithValue plumbing for filters + embedding credentials becomes a typed
- * {@link RetrievalContext} handed to the resolved {@link Retriever}. Behavior —
- * defaults, validation, the empty-vs-absent filter distinction, the
- * explicit-zero-vs-unset factory-timeout distinction, and all error wording — is
- * preserved.
+ * Connection settings are a typed options object; filters and embedding
+ * credentials are passed through a typed {@link RetrievalContext} handed to the
+ * resolved {@link Retriever}. The empty-vs-absent filter distinction and the
+ * explicit-zero-vs-unset factory-timeout distinction are both meaningful.
  */
 
 import {
@@ -54,8 +51,8 @@ export interface RetrieveOptions {
 export interface RetrieveWithFiltersOptions extends RetrieveOptions {
   /**
    * Filters known at graph-build time, merged into the filter map every call.
-   * Runtime filters win on key collision. (The CSV form used by Go's
-   * static_filters param can be produced with {@link parseStaticFilters}.)
+   * Runtime filters win on key collision. (A comma-separated `key=value` string
+   * can be turned into this record with {@link parseStaticFilters}.)
    */
   staticFilters?: Record<string, string>;
 }
@@ -86,11 +83,10 @@ function resolveEmbedTimeout(ms: number | undefined, opName: string): number {
 
 /**
  * Builds the embedding credentials to install, or undefined when the caller set
- * none. Mirrors Go's install condition: install only when credentialRef,
- * clientFactoryId, or factoryTimeoutMs was explicitly provided. An explicit
- * `factoryTimeoutMs: 0` still installs (the install signals intent, distinct
- * from "unset"); when unset but another credential field is set, the 30s default
- * applies.
+ * none. Install happens only when credentialRef, clientFactoryId, or
+ * factoryTimeoutMs was explicitly provided. An explicit `factoryTimeoutMs: 0`
+ * still installs (the install signals intent, distinct from "unset"); when unset
+ * but another credential field is set, the 30s default applies.
  */
 function buildEmbeddingCredentials(opts: RetrieveOptions): EmbeddingCredentials | undefined {
   const ref = opts.credentialRef ?? "";
@@ -188,10 +184,10 @@ export function retrieveWithFilters(
 }
 
 /**
- * Parses a comma-separated `key=value` list into a record (the CSV form of Go's
- * static_filters param). Whitespace around keys, values, and separators is
- * trimmed; empty input returns `{}`. Throws on malformed entries: no `=`, empty
- * key, or duplicate key — with the same wording as the Go original.
+ * Parses a comma-separated `key=value` list into a record (a convenient form for
+ * static filters). Whitespace around keys, values, and separators is trimmed;
+ * empty input returns `{}`. Throws on malformed entries: no `=`, empty key, or
+ * duplicate key.
  */
 export function parseStaticFilters(raw: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -239,6 +235,7 @@ export function validateCitations(
   raw: readonly string[] | null | undefined,
   allowed: readonly string[] | null | undefined,
 ): CitationResult {
+  // Normalize to empty arrays so `.length`/iteration consumers need no null-checks.
   if (!raw || raw.length === 0) return { accepted: [], rejected: [] };
   const allowSet = new Set(allowed ?? []);
   const accepted: string[] = [];

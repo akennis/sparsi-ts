@@ -17,28 +17,24 @@ export function coalesceVal<T>(...vals: (T | null | undefined)[]): T | undefined
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Faithful Go op catalog (sparsi-go library/select_ops.go). Each function
-// mirrors a registered Go operator's Run() semantics exactly. The `*Description`
-// constants are verbatim from Go. JS has a single number type, so the Float64
-// and Int select/default variants share one impl.
+// Select / switch / default op catalog, over a single numeric type. JS has one
+// `number` type, so there is one selectNumber / defaultNumber pair rather than
+// separate float/int variants. Nil handling uses `== null` to cover both null and
+// undefined.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Select (ternary) ─────────────────────────────────────────────────────────
 
 export const SelectStringOpDescription =
   "SelectStringOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond *bool, IfTrue *string, IfFalse *string. Output: Result string.";
-export const SelectFloat64OpDescription =
-  "SelectFloat64Op: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond *bool, IfTrue *float64, IfFalse *float64. Output: Result float64.";
-export const SelectIntOpDescription =
-  "SelectIntOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond *bool, IfTrue *int, IfFalse *int. Output: Result int.";
+export const SelectNumberOpDescription =
+  "SelectNumberOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond *bool, IfTrue *number, IfFalse *number. Output: Result number.";
 export const SelectBoolOpDescription =
   "SelectBoolOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond *bool, IfTrue *bool, IfFalse *bool. Output: Result bool.";
 
 export const selectString = (cond: boolean, ifTrue: string, ifFalse: string): string =>
   cond ? ifTrue : ifFalse;
-export const selectFloat64 = (cond: boolean, ifTrue: number, ifFalse: number): number =>
-  cond ? ifTrue : ifFalse;
-export const selectInt = (cond: boolean, ifTrue: number, ifFalse: number): number =>
+export const selectNumber = (cond: boolean, ifTrue: number, ifFalse: number): number =>
   cond ? ifTrue : ifFalse;
 export const selectBool = (cond: boolean, ifTrue: boolean, ifFalse: boolean): boolean =>
   cond ? ifTrue : ifFalse;
@@ -51,13 +47,13 @@ export const SwitchStringOpDescription = `SwitchStringOp: looks up Key in a para
   Input:  Key *string.
   Output: Result string.`;
 
-/** Looks up `key` in `cases`; returns `defValue` when key is missing/undefined. */
+/** Looks up `key` in `cases`; returns `defValue` when key is nil (F16). */
 export function switchString(
-  key: string | undefined,
+  key: string | null | undefined,
   cases: Record<string, string>,
   defValue = "",
 ): string {
-  if (key === undefined) return defValue;
+  if (key == null) return defValue;
   return key in cases ? cases[key]! : defValue;
 }
 
@@ -65,19 +61,13 @@ export function switchString(
 
 export const DefaultStringOpDescription =
   "DefaultStringOp: returns Default when Value is nil or the empty string; otherwise returns Value. Inputs: Value *string, Default *string. Output: Result string.";
-export const DefaultFloat64OpDescription =
-  "DefaultFloat64Op: returns Default when Value is nil; zero is treated as a valid value. Inputs: Value *float64, Default *float64. Output: Result float64.";
-export const DefaultIntOpDescription =
-  "DefaultIntOp: returns Default when Value is nil; zero is treated as a valid value. Inputs: Value *int, Default *int. Output: Result int.";
+export const DefaultNumberOpDescription =
+  "DefaultNumberOp: returns Default when Value is nil; zero is treated as a valid value. Inputs: Value *number, Default *number. Output: Result number.";
 
-/** Returns `def` when `value` is undefined or empty; otherwise `value`. */
-export const defaultString = (value: string | undefined, def: string): string =>
-  value === undefined || value === "" ? def : value;
+/** Returns `def` when `value` is nil or empty; otherwise `value` (F16). */
+export const defaultString = (value: string | null | undefined, def: string): string =>
+  value == null || value === "" ? def : value;
 
-/** Returns `def` when `value` is undefined; zero is a valid value. */
-export const defaultFloat64 = (value: number | undefined, def: number): number =>
-  value === undefined ? def : value;
-
-/** Returns `def` when `value` is undefined; zero is a valid value. */
-export const defaultInt = (value: number | undefined, def: number): number =>
-  value === undefined ? def : value;
+/** Returns `def` when `value` is nil; zero is a valid value. */
+export const defaultNumber = (value: number | null | undefined, def: number): number =>
+  value == null ? def : value;

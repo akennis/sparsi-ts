@@ -2,18 +2,19 @@
  * AI example — mixing Claude and Gemini in a single workflow for a
  * summarization-faithfulness check.
  *
- * Faithful port of sparsi-go examples/faithful-summary/main.go. Claude produces a
- * 3–5 sentence summary of a source document; a deterministic formatting op
- * assembles the source + summary into one verification prompt; Gemini then checks
- * whether every factual claim in the summary is grounded in the source, returning
- * a boolean verdict. Using a second, independent model to verify is more likely
- * to surface unsupported claims than re-asking the model that wrote the summary.
+ * Claude produces a 3–5 sentence summary of a source document; a deterministic
+ * formatting op assembles the source + summary into one verification prompt;
+ * Gemini then checks whether every factual claim in the summary is grounded in the
+ * source, returning a boolean verdict. Using a second, independent model to verify
+ * is more likely to surface unsupported claims than re-asking the model that wrote
+ * the summary.
  *
- * In sparsi-ts the provider for an AI op is the injected `ctx.ai` client: Claude
- * is the run-wide default, and the verify op runs against a derived context whose
- * `ai` is a Gemini client — the idiomatic analog of the Go per-op `provider` param.
+ * The provider for an AI op is the injected `ctx.ai` client: Claude is the
+ * run-wide default, and the verify op runs against a derived context whose `ai` is
+ * a Gemini client.
  *
- * The Go `-mcp` stdio-server wrapper is intentionally omitted (§6g: optional).
+ * When neither --file nor --text is given, this falls back to a built-in SAMPLE so
+ * it runs with no args. `source_length` is the UTF-8 byte length of the source.
  *
  * Requires BOTH CLAUDE_API_KEY (or ANTHROPIC_API_KEY) and GEMINI_API_KEY.
  *   npm run example:faithful -- --text "..."
@@ -50,7 +51,7 @@ function build(gemini: AIClient) {
     ),
     { name: "summarize" });
 
-  // Deterministic prompt assembly (verbatim Go format string).
+  // Deterministic prompt assembly.
   const query = wf.op({ source, summary }, ({ source, summary }) =>
     `Source document:\n${source}\n\nSummary to verify:\n${summary}`, { name: "format_check" });
 
@@ -101,7 +102,7 @@ async function main() {
   });
 
   const out = {
-    source_length: source.length,
+    source_length: Buffer.byteLength(source, "utf8"),
     summary: result.get(summary),
     faithful: result.get(faithful),
   };

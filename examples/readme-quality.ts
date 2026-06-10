@@ -1,20 +1,18 @@
 /**
  * AI example — a GitHub README quality reporter.
  *
- * Faithful port of sparsi-go examples/readme-quality/main.go. Given an
- * owner/repo slug (or a fixture file), it fetches the README, truncates it to
- * 8 KB, runs five AI quality probes concurrently (purpose, doc-completeness
+ * Given an owner/repo slug (or a fixture file), it fetches the README, truncates
+ * it to 8 KB, runs five AI quality probes concurrently (purpose, doc-completeness
  * score, clarity score, has-tests, has-install), computes an average score
  * deterministically, routes through one of three quality lanes (excellent / ok /
  * poor), and appends a "tests not mentioned" warning when has_tests is false.
  *
  * Live mode fetches the README from the main and master branches in parallel and
- * picks whichever returned HTTP 200. The Go `-mcp` stdio-server wrapper is
- * intentionally omitted (§6g: optional); the live fetch / fixture read and the
- * branch pick are resolved here in main(), so the workflow is the analysis DAG.
+ * picks whichever returned HTTP 200. The live fetch / fixture read and the branch
+ * pick are resolved here in main(), so the workflow is the analysis DAG.
  *
  * Requires CLAUDE_API_KEY (or ANTHROPIC_API_KEY). `--slug` also hits live network.
- *   npm run example:readme                          # bundled dagor.md fixture
+ *   npm run example:readme                          # bundled sample-readme.md fixture
  *   npm run example:readme -- --slug golang/go
  *   npm run example:readme -- --fixture examples/testdata/readme/n.md
  */
@@ -59,7 +57,15 @@ const LANES: Lane[] = [
   },
 ];
 
-/** Caps the input to at most MAX_BYTES UTF-8 bytes (Go StringTruncateOp). */
+/**
+ * Caps the input to at most MAX_BYTES UTF-8 bytes.
+ *
+ * If the cut at MAX_BYTES lands mid-rune, the trailing partial UTF-8 sequence
+ * decodes to U+FFFD here (a JS string cannot hold the raw, invalid bytes that a
+ * byte-oriented truncation would leave behind). The bundled sample-readme.md fixture is
+ * well under the cap, so this only affects inputs larger than MAX_BYTES whose
+ * boundary byte splits a multi-byte character.
+ */
 function truncate(s: string): string {
   const buf = Buffer.from(s, "utf8");
   return buf.length > MAX_BYTES ? buf.subarray(0, MAX_BYTES).toString("utf8") : s;
@@ -87,7 +93,7 @@ function build() {
 
   // Stage 4 — deterministic average score.
   const avgScore = wf.op({ docScore, clarityScore }, ({ docScore, clarityScore }) =>
-    ops.num.divFloat(ops.num.addFloat(docScore, clarityScore), 2.0), { name: "avg_score_op" });
+    ops.num.div(ops.num.add(docScore, clarityScore), 2.0), { name: "avg_score_op" });
 
   // Stage 5 — three quality lanes (exactly one fires, gated on avg_score).
   const laneNodes = LANES.map((lane) =>
@@ -163,8 +169,8 @@ async function main() {
     displaySlug = slug;
     readmeRaw = await fetchReadme(slug);
   } else {
-    // --fixture, or the bundled dagor.md default so the example runs with no args.
-    const path = fixture ?? join(__dirname, "testdata", "readme", "dagor.md");
+    // --fixture, or the bundled default so the example runs with no args.
+    const path = fixture ?? join(__dirname, "testdata", "readme", "sample-readme.md");
     displaySlug = fixture ? fixture : basename(path);
     readmeRaw = readFileSync(path, "utf8");
   }

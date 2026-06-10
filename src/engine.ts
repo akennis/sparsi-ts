@@ -19,6 +19,19 @@ function isSkip(v: Settled): v is Skip {
   return v === SKIP;
 }
 
+/**
+ * Deep-copies a reduce seed so each run starts from a fresh accumulator. Falls
+ * back to the original value when it isn't structured-cloneable (e.g. holds a
+ * function or class instance); such seeds must be treated as immutable.
+ */
+function cloneSeed<A>(seed: A): A {
+  try {
+    return structuredClone(seed);
+  } catch {
+    return seed;
+  }
+}
+
 /** Validates the graph is acyclic and that every referenced node exists. */
 function checkAcyclic(defs: ReadonlyMap<string, AnyNodeDef>): void {
   const indegree = new Map<string, number>();
@@ -108,6 +121,20 @@ export async function execute(
     }
   };
 
+  /**
+   * Short-circuits scheduling once the run is aborted — by an onError:"stop"
+   * failure or an external RunOptions.signal — so not-yet-started work must not
+   * run, to avoid wasted or
+   * duplicate side effects (extra AI/MCP calls, I/O). Records the abort as the
+   * run's error so an external cancellation still rejects the run (a no-op when a
+   * stop-error already set firstError), and signals the caller to skip the node.
+   */
+  const abortedBeforeStart = (): boolean => {
+    if (!ctx.signal.aborted) return false;
+    fail(ctx.signal.reason ?? new Error("run aborted"));
+    return true;
+  };
+
   function resolve(id: string): Promise<Settled> {
     const cached = memo.get(id);
     if (cached) return cached;
@@ -151,6 +178,7 @@ export async function execute(
       if (isSkip(v)) return SKIP; // skip propagation
       resolved[entries[i]![0]] = v;
     }
+    if (abortedBeforeStart()) return SKIP;
     try {
       if (def.condition && !(await def.condition(resolved, ctx))) return SKIP;
       const out = await pool.run(async () => def.fn(resolved, ctx));
@@ -175,6 +203,7 @@ export async function execute(
   ): Promise<Settled> {
     const src = await resolve(def.source);
     if (isSkip(src)) return SKIP;
+    if (abortedBeforeStart()) return SKIP;
     const items = src as unknown[];
     try {
       return await Promise.all(
@@ -192,6 +221,7 @@ export async function execute(
   ): Promise<Settled> {
     const src = await resolve(def.source);
     if (isSkip(src)) return SKIP;
+    if (abortedBeforeStart()) return SKIP;
     const items = src as unknown[];
     try {
       const keep = await Promise.all(
@@ -210,10 +240,15 @@ export async function execute(
   ): Promise<Settled> {
     const src = await resolve(def.source);
     if (isSkip(src)) return SKIP;
+    if (abortedBeforeStart()) return SKIP;
     const items = src as unknown[];
     try {
-      let acc = def.initial;
+      // Snapshot the build-time seed per run: a Workflow is built once and run
+      // many times, so a mutable seed (e.g. [] or {}) mutated in place by the
+      // reducer would otherwise leak the previous run's accumulator into the next.
+      let acc = cloneSeed(def.initial);
       for (const item of items) {
+        if (abortedBeforeStart()) return SKIP;
         acc = await pool.run(async () => def.reducer(acc, item, ctx));
       }
       return acc;

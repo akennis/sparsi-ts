@@ -1,11 +1,10 @@
 /**
- * Retriever contract + registry, ported from sparsi-go library/retriever.go.
+ * Retriever contract + registry.
  *
- * Go threads request-scoped filters and embedding credentials through
- * context.WithValue and exposes them to Retrievers via FromContext helpers. TS
- * has no ambient context, so {@link Retriever.retrieve} receives a typed
- * {@link RetrievalContext} carrying the cancellation signal, the filters, the
- * installed embedding credentials, and a bound {@link EmbeddingClient} resolver.
+ * Request-scoped filters and embedding credentials are passed explicitly:
+ * {@link Retriever.retrieve} receives a typed {@link RetrievalContext} carrying
+ * the cancellation signal, the filters, the installed embedding credentials, and
+ * a bound {@link EmbeddingClient} resolver.
  *
  * SECURITY: both the query and any filter values are UNTRUSTED — they routinely
  * originate from upstream AI ops fed by LLM output. Retriever implementations
@@ -89,8 +88,8 @@ export class RetrievalFilters {
 }
 
 /**
- * The typed context a {@link Retriever} receives. Replaces Go's ctx bag: `signal`
- * carries cancellation (including any per-op embed deadline), `filters` is the
+ * The typed context a {@link Retriever} receives: `signal` carries cancellation
+ * (including any per-op embed deadline), `filters` is the
  * installed {@link RetrievalFilters} or undefined, `embeddingCredentials` is the
  * installed {@link EmbeddingCredentials} or undefined ("not installed", distinct
  * from an installed value with `factoryTimeoutMs: 0`), and

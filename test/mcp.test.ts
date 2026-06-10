@@ -1,22 +1,17 @@
 /**
- * MCP-op parity, mirroring sparsi-go library/mcp_call_op_test.go (plus the
- * MCPScriptOp / pool surfaces those tests' production code implies).
+ * MCP-op coverage across the MCPCallOp, MCPScriptOp, and pool surfaces.
  *
- * The Go tests fall into three buckets, all reproduced here:
+ * Three buckets:
  *   1. Pure parsing/validation (Setup defaults, transport-spec, CSV) — direct calls.
  *   2. Op logic (result dispatch, retry, tool-error, args) — driven through a
- *      FAKE in-memory session installed via setMCPSessionFactory, the TS analog of
- *      Go's MCPSession interface seam.
+ *      FAKE in-memory session installed via setMCPSessionFactory.
  *   3. End-to-end against a REAL in-process MCP server over the SDK's
- *      InMemoryTransport — the faithful analog of Go's
- *      TestMCPCallOp_EndToEnd_InProcessServer / _ToolError (no subprocess, no network).
+ *      InMemoryTransport (no subprocess, no network).
  *
- * Intentionally NOT ported: Go's SetInputField/ResetFields/InputFields field
- * interface (reflection scaffolding with no typed-TS analogue — sparsi-ts passes
- * typed `input` + `output`/`parseResponse` directly), and the live
- * stdio-subprocess / streamable-HTTP-network legs (no guaranteed MCP server
- * binary on PATH / no network in this environment). Header injection is unit-tested
- * directly via applyStaticHeaders instead of an httptest server.
+ * Not covered: the live stdio-subprocess / streamable-HTTP-network legs (no
+ * guaranteed MCP server binary on PATH / no network in this environment). Header
+ * injection is unit-tested directly via applyStaticHeaders instead of a live
+ * HTTP server.
  */
 
 import { test, afterEach } from "node:test";
@@ -61,10 +56,10 @@ class FakeSession implements MCPSession {
   }
 }
 
-const ok = (text: string, structured?: Record<string, unknown>): MCPCallOutcome => ({
+const ok = (text: string, structured?: unknown): MCPCallOutcome => ({
   text,
   isToolError: false,
-  ...(structured ? { structured } : {}),
+  ...(structured !== undefined ? { structured } : {}),
 });
 
 // ============================================================================
@@ -171,7 +166,7 @@ test("setupMCPCall requires a tool", () => {
 });
 
 // ============================================================================
-// 1b. Header injection (analog of the Go httptest header-injection assertion)
+// 1b. Header injection
 // ============================================================================
 
 test("applyStaticHeaders sets missing headers but never overwrites existing", () => {
@@ -195,9 +190,9 @@ test("mcpCall returns trimmed string by default", async () => {
   assert.equal(out, "hello world");
 });
 
-test("mcpCall dispatches int / number / boolean / string[] outputs", async () => {
+test("mcpCall dispatches number / boolean / string[] outputs", async () => {
   installSession(() => new FakeSession(() => ok("42")));
-  assert.equal(await mcp.mcpCall(null, { command: CMD, tool: "t", output: "int" }), 42);
+  assert.equal(await mcp.mcpCall(null, { command: CMD, tool: "t", output: "number" }), 42);
 
   installSession(() => new FakeSession(() => ok("3.14")));
   assert.equal(await mcp.mcpCall(null, { command: CMD, tool: "t", output: "number" }), 3.14);
@@ -238,6 +233,42 @@ test("mcpCall output 'json' parses text JSON when no structured content", async 
     output: "json",
   });
   assert.deepEqual(out, { a: 1, b: "two" });
+});
+
+test("mcpCall uses structured content for scalar/array outputs, placeholder text ignored (F2)", async () => {
+  // Server returns its result purely as structuredContent; text is a placeholder.
+  installSession(() => new FakeSession(() => ok("(see structured)", 42)));
+  assert.equal(await mcp.mcpCall(null, { command: CMD, tool: "t", output: "number" }), 42);
+
+  installSession(() => new FakeSession(() => ok("(see structured)", ["a", "b"])));
+  assert.deepEqual(
+    await mcp.mcpCall(null, { command: CMD, tool: "t", output: "string[]" }),
+    ["a", "b"],
+  );
+
+  installSession(() => new FakeSession(() => ok("(see structured)", true)));
+  assert.equal(await mcp.mcpCall(null, { command: CMD, tool: "t", output: "boolean" }), true);
+});
+
+test("mcpCall falls back to text when structured shape doesn't fit the kind (F2)", async () => {
+  // A structured object can't coerce to a number → fall through to the text path.
+  installSession(() => new FakeSession(() => ok("7", { unrelated: "obj" })));
+  assert.equal(await mcp.mcpCall(null, { command: CMD, tool: "t", output: "number" }), 7);
+});
+
+test("mcpCall does not prewarm the pool on the per-run path (F12)", async () => {
+  // With no pool (poolSize 0) and a fresh session per call, prewarm is irrelevant;
+  // a non-pooled mcpCall must still create exactly one session and close it.
+  const sessions: FakeSession[] = [];
+  installSession(() => {
+    const s = new FakeSession(() => ok("hi"));
+    sessions.push(s);
+    return s;
+  });
+  await mcp.mcpCall(null, { command: CMD, tool: "t" });
+  await mcp.mcpCall(null, { command: CMD, tool: "t" });
+  assert.equal(sessions.length, 2);
+  assert.equal(sessions[0]!.closeCount, 1);
 });
 
 test("mcpCall encodes input as the tool arguments; formatArgs overrides", async () => {

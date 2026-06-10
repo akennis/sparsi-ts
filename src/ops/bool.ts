@@ -1,8 +1,7 @@
 /**
- * Faithful Go op catalog (sparsi-go library/bool_ops.go).
+ * Boolean op catalog: not / and / or.
  *
- * Each function mirrors a registered Go operator's Run() semantics exactly. The
- * `*Description` constants are the user-facing op docs (verbatim from Go).
+ * The `*Description` constants are the user-facing op docs.
  */
 
 export const BoolNotOpDescription =

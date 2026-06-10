@@ -32,9 +32,9 @@ interface RepairableInput {
 }
 
 /**
- * Mirrors the Go stubInner: a programmable inner op that records its runs and the
- * input text it saw, and can be scripted to fail (repairably or not) for the first
- * N invocations before succeeding with "ok:<text>".
+ * A programmable inner op that records its runs and the input text it saw, and can
+ * be scripted to fail (repairably or not) for the first N invocations before
+ * succeeding with "ok:<text>".
  */
 function makeInner(opts: {
   failures?: (Error | null)[];
@@ -59,7 +59,7 @@ function makeInner(opts: {
   return { state, run };
 }
 
-/** Mirrors stubRepairable.UnmarshalRepair: "ERR:" prefix => parse failure. */
+/** Parses a repair response: an "ERR:" prefix signals a parse failure. */
 const parse = (response: string): RepairableInput => {
   if (response.startsWith("ERR:")) throw new Error(response.slice(4));
   return { text: response };

@@ -1,5 +1,5 @@
 import type { RunContext } from "../types";
-import { aiCompute, retryLoop, RetryError } from "./compute";
+import { aiCompute, retryLoop, RetryError, goQuote } from "./compute";
 
 /** Options common to every AI op. */
 export interface AIOpOptions {
@@ -49,10 +49,8 @@ export function modeSelect(
         try {
           env = JSON.parse(raw);
         } catch (e) {
-          throw new RetryError(
-            `Previous response was invalid JSON — ${(e as Error).message}.`,
-            `expected JSON {result, reasoning}, got "${raw}"`,
-          );
+          const detail = `expected JSON {result, reasoning}, got ${goQuote(raw)}: ${(e as Error).message}`;
+          throw new RetryError(`Previous response was invalid JSON — ${detail}.`, detail);
         }
         result = String(env.result ?? "").trim();
         reasoning = env.reasoning;
@@ -61,8 +59,8 @@ export function modeSelect(
       }
       if (!catSet.has(result)) {
         throw new RetryError(
-          `Previous result "${result}" was invalid — must be exactly one of: ${catList}.`,
-          `result "${result}" is not one of ${cats.join(", ")}`,
+          `Previous result ${goQuote(result)} was invalid — must be exactly one of: ${catList}.`,
+          `result ${goQuote(result)} is not one of ${cats.join(", ")}`,
         );
       }
       return { value: result, reasoning };
@@ -102,10 +100,16 @@ export function aiBool(
         } catch (e) {
           throw new RetryError(
             'Previous response was not valid JSON. Respond with only: {"result": <true|false>, "reasoning": "<string>"}.',
-            `expected JSON {result, reasoning}, got "${raw}": ${(e as Error).message}`,
+            `expected JSON {result, reasoning}, got ${goQuote(raw)}: ${(e as Error).message}`,
           );
         }
-        return { value: Boolean(env.result), reasoning: env.reasoning };
+        if (typeof env.result !== "boolean") {
+          throw new RetryError(
+            'Previous response was not valid JSON. Respond with only: {"result": <true|false>, "reasoning": "<string>"}.',
+            `expected boolean result, got ${JSON.stringify(env.result)}`,
+          );
+        }
+        return { value: env.result, reasoning: env.reasoning };
       }
       switch (raw.toLowerCase()) {
         case "true":
@@ -114,8 +118,8 @@ export function aiBool(
           return { value: false };
         default:
           throw new RetryError(
-            `Previous response "${raw}" was invalid. Respond with only 'true' or 'false'.`,
-            `expected true or false, got "${raw}"`,
+            `Previous response ${goQuote(raw)} was invalid. Respond with only 'true' or 'false'.`,
+            `expected true or false, got ${goQuote(raw)}`,
           );
       }
     },
@@ -159,7 +163,9 @@ export function aiScore(
             `expected JSON {score, reasoning}, got "${raw}": ${(e as Error).message}`,
           );
         }
-        score = Number(env.score);
+        // A missing score defaults to 0 (an in-range value), not a parse failure.
+        // A present but non-numeric score is still a retry.
+        score = env.score === undefined || env.score === null ? 0 : Number(env.score);
         reasoning = env.reasoning;
         if (Number.isNaN(score) || score < 0 || score > 1) {
           throw new RetryError(

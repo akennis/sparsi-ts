@@ -2,10 +2,9 @@
  * RAG example — retrieval-augmented generation over a small local knowledge base
  * with source-file citations, retrieved by an in-memory BM25 index.
  *
- * Faithful port of sparsi-go examples/rag-bm25 (main.go + bm25.go). On startup it
- * loads every .txt file under testdata/kb/, tags each Document with
+ * On startup it loads every .txt file under testdata/kb/, tags each Document with
  * Metadata[source] = filename, indexes them with a BM25 retriever, and registers
- * it as the process default. The graph is the same shape as the Go original:
+ * it as the process default. The graph shape:
  *
  *   question ─► retrieve (k=3) ─► documents ─┬─► build_rag_prompt ─► answer (AI) ─► parse_citations ─┐
  *                                            ├─► retrieved_sources ─────────────────────────────────┴─► validate_citations
@@ -19,10 +18,11 @@
  * (dropping hallucinations). The shared prompt/citation helpers live in
  * rag-common.ts.
  *
- * The Go `-mcp` stdio-server wrapper is intentionally omitted (§6g: optional);
- * this is a clean CLI entry point over the same analysis DAG.
+ * A clean CLI entry point over the analysis DAG.
  *
- * Requires CLAUDE_API_KEY (or ANTHROPIC_API_KEY).
+ * Requires CLAUDE_API_KEY (or ANTHROPIC_API_KEY). With no args it answers a
+ * default "how do I return an item?" question.
+ *   npm run example:rag-bm25                                  # default question
  *   npm run example:rag-bm25 -- --question "how do I return an item?"
  *   npm run example:rag-bm25 -- --question "is my heat pump supported?" --kb examples/testdata/kb
  */
@@ -102,7 +102,7 @@ export class BM25Retriever implements rag.Retriever {
         scored.push({ ...this.docs[i]!, score });
       }
     }
-    // Array.prototype.sort is stable (ES2019+), matching Go's sort.SliceStable.
+    // Array.prototype.sort is stable (ES2019+), so equal scores keep input order.
     scored.sort((a, b) => b.score - a.score);
     return k < scored.length ? scored.slice(0, k) : scored;
   }
@@ -168,10 +168,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const args = parseArgs(process.argv.slice(2));
-  if (!args.question || args.question.trim() === "") {
-    console.error('usage: rag-bm25 --question "<your question>" [--kb <dir>]');
-    process.exit(2);
-  }
+  // Default question (matches the KB's returns.txt) so the example runs with no args.
+  const question = args.question?.trim() ? args.question : "how do I return an item?";
 
   const kbDir = args.kb ?? join(__dirname, "testdata", "kb");
   const docs = loadKb(kbDir);
@@ -180,7 +178,7 @@ async function main(): Promise<void> {
   const { wf, documents, body, validated } = build();
   const result = await wf.run({
     ai: new ai.AnthropicClient(),
-    values: { question: args.question },
+    values: { question },
     concurrency: 10,
   });
 

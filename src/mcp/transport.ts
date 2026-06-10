@@ -1,17 +1,10 @@
 /**
  * MCP transport-spec parsing & config resolution — the pure (SDK-free) layer.
  *
- * Faithful port of the parsing/validation logic in sparsi-go's mcp_call_op.go
- * (mcpParseTransportSpec, mcpParseDurationMs, mcpParsePoolSize,
- * mcpParsePoolPrewarm, mcpSplitCSV) and mcp_client.go's mcpTransportSpec.label.
- *
- * Go threads these through `*config.Params` string params populated at graph
- * build. sparsi-ts replaces the string-keyed param bag with a typed options
- * object; the Go `Setup`-time `strconv.Atoi`/`url.Parse`/`exec.LookPath` guards
- * become call-time typed-argument guards here. Every error string and every
- * default (init 10000ms, call 30000ms, retries 3, pool 0/prewarm true, stdio
- * default transport, http/https scheme requirement, headers sorted for pool-key
- * canonicalization) is preserved.
+ * Takes a typed options object and validates it: the integer/URL/executable
+ * guards run as call-time typed-argument checks. Defaults are init 10000ms, call
+ * 30000ms, retries 3, pool 0 / prewarm true, stdio default transport, http/https
+ * scheme requirement, and headers sorted for pool-key canonicalization.
  *
  * This module deliberately imports NO MCP SDK code so the parsing/validation is
  * unit-testable without a server or the SDK.
@@ -27,7 +20,7 @@ export type MCPTransport = "stdio" | "http";
  * Canonicalized description of how to reach one MCP server. Vertices populate
  * this; the pool keys on it; {@link buildTransport} turns it into a concrete SDK
  * transport. `env` is a list of `KEY=VALUE` pairs in input order; `headers` is a
- * list of `KEY=VALUE` pairs sorted for pool-key stability (matching Go).
+ * list of `KEY=VALUE` pairs sorted for pool-key stability.
  */
 export interface MCPTransportSpec {
   kind: MCPTransport;
@@ -41,10 +34,10 @@ export interface MCPTransportSpec {
 }
 
 /**
- * Shared connection options for {@link mcpCall} / {@link mcpScript}. The typed
- * idiom for Go's `config.Params`: `transport` selects the leg; the stdio/http
- * fields are validated only for the chosen leg. `env`/`headers` accept a record
- * (idiomatic) — use {@link parseKVList} to build one from the Go CSV form.
+ * Shared connection options for {@link mcpCall} / {@link mcpScript}. `transport`
+ * selects the leg; the stdio/http fields are validated only for the chosen leg.
+ * `env`/`headers` accept a record — use {@link parseKVList} to build one from a
+ * comma-separated `KEY=VALUE` string.
  */
 export interface MCPConnectionOptions {
   /** "stdio" (default) runs a local subprocess; "http" talks to a remote server. */
@@ -92,9 +85,8 @@ export function mcpLabel(spec: MCPTransportSpec): string {
 }
 
 /**
- * Splits a comma-separated list: trims each part and drops empties. Mirrors Go's
- * `mcpSplitCSV` (empty input → empty list). Exported for callers migrating from
- * the Go CSV param style.
+ * Splits a comma-separated list: trims each part and drops empties (empty input →
+ * empty list). Exported for callers whose config arrives as a CSV string.
  */
 export function splitCSV(s: string): string[] {
   if (s === "") return [];
@@ -108,9 +100,8 @@ export function splitCSV(s: string): string[] {
 
 /**
  * Parses a comma-separated `KEY=VALUE` list into a record, dropping entries with
- * no `=` or an empty key (the malformed-drop semantics of Go's env/headers
- * parsing). Later keys win on collision. Convenience for users whose config
- * arrives in the Go CSV form (e.g. `env: parseKVList("FOO=bar,BAZ=qux")`).
+ * no `=` or an empty key. Later keys win on collision. Convenience for users whose
+ * config arrives as a CSV string (e.g. `env: parseKVList("FOO=bar,BAZ=qux")`).
  */
 export function parseKVList(s: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -122,7 +113,12 @@ export function parseKVList(s: string): Record<string, string> {
   return out;
 }
 
-/** Converts a record into `KEY=VALUE[]`, dropping empty keys. */
+/**
+ * Converts a record into `KEY=VALUE[]`, dropping empty keys. The list is sorted so
+ * it is order-independent: two callers passing the same environment in different
+ * key orders yield identical specs (and therefore share one warm pool slot). Env
+ * order is not significant to a subprocess, so sorting is safe.
+ */
 function recordToKV(rec: Record<string, string> | undefined): string[] {
   if (!rec) return [];
   const out: string[] = [];
@@ -131,7 +127,7 @@ function recordToKV(rec: Record<string, string> | undefined): string[] {
     if (key === "") continue;
     out.push(`${key}=${v}`);
   }
-  return out;
+  return out.sort();
 }
 
 /** Resolves a non-negative duration in ms; negative/NaN/undefined → default. */
@@ -140,7 +136,7 @@ function resolveDurationMs(ms: number | undefined, defaultMs: number): number {
   return ms;
 }
 
-/** Resolves max-retries; non-finite → default 3 (mirrors Go's Atoi fallback). */
+/** Resolves max-retries; non-finite → default 3. */
 function resolveMaxRetries(n: number | undefined): number {
   if (n === undefined || !Number.isFinite(n)) return 3;
   return Math.trunc(n);
@@ -153,9 +149,9 @@ function resolvePoolSize(n: number | undefined): number {
 }
 
 /**
- * Resolves an executable on PATH, mirroring Go's `exec.LookPath`. A command
- * containing a path separator is checked directly; a bare name is searched
- * across PATH entries (consulting PATHEXT on Windows). Throws when not found.
+ * Resolves an executable on PATH. A command containing a path separator is
+ * checked directly; a bare name is searched across PATH entries (consulting
+ * PATHEXT on Windows). Throws when not found.
  */
 function lookPath(command: string): string {
   const isWin = process.platform === "win32";
@@ -191,7 +187,13 @@ function lookPath(command: string): string {
 
 function isFile(p: string): boolean {
   try {
-    return statSync(p).isFile();
+    const st = statSync(p);
+    if (!st.isFile()) return false;
+    // On POSIX, a regular file must carry an execute bit to be runnable; a
+    // readable-but-non-executable file on PATH is not a valid command. Windows
+    // determines executability by extension (PATHEXT), not a mode bit.
+    if (process.platform !== "win32" && (st.mode & 0o111) === 0) return false;
+    return true;
   } catch {
     return false;
   }
@@ -200,8 +202,7 @@ function isFile(p: string): boolean {
 /**
  * Validates transport-selection options for the chosen kind and returns a
  * canonical {@link MCPTransportSpec}. `opName` prefixes error messages so the
- * MCPCallOp / MCPScriptOp callers get contextual diagnostics. Error wording
- * matches the Go original verbatim.
+ * MCPCallOp / MCPScriptOp callers get contextual diagnostics.
  */
 export function parseTransportSpec(
   opts: MCPConnectionOptions,
@@ -250,7 +251,7 @@ export function parseTransportSpec(
     if (scheme !== "http" && scheme !== "https") {
       throw new Error(`${opName}: url "${raw}" must use http or https scheme (got "${scheme}")`);
     }
-    const headers = recordToKV(opts.headers).sort();
+    const headers = recordToKV(opts.headers);
     return {
       kind: "http",
       command: "",

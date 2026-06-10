@@ -1,7 +1,6 @@
 /**
- * MCP op surface, ported from sparsi-go's mcp_client.go, mcp_call_op.go,
- * mcp_script_op.go, and mcp_pool.go. See the individual modules for behavior and
- * the SECURITY notes baked into their doc comments.
+ * MCP op surface. See the individual modules for behavior and the SECURITY notes
+ * baked into their doc comments.
  *
  * Two ops:
  *   - {@link mcpCall}: one tool call per run (fresh session, or pooled stdio).

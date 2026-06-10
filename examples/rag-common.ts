@@ -1,11 +1,10 @@
 /**
- * Shared RAG-example helpers — ported from the duplicated Go code in
- * examples/rag-bm25 and examples/rag-gemini-embed (both Go packages copy the
- * same BuildRAGPromptOp / RetrievedSourcesOp / ParseCitationsOp + the XML
- * escapers + loadKB). In TS the two examples are separate entry points that
- * share this one module rather than copy-pasting; behavior is byte-for-byte
- * faithful to the Go originals (prompt text, escaping, citation parsing, the
- * 100-citation cap, the dedup/order rules, and the source-filename fallback).
+ * Shared RAG-example helpers used by examples/rag-bm25 and
+ * examples/rag-gemini-embed: BuildRAGPrompt / RetrievedSources / ParseCitations,
+ * the XML escapers, and loadKB. The two examples are separate entry points that
+ * share this one module rather than copy-pasting (prompt text, escaping, citation
+ * parsing, the 100-citation cap, the dedup/order rules, and the source-filename
+ * fallback).
  *
  * SECURITY: BuildRAGPrompt wraps each retrieved passage in a
  * <passage source="..."> tag whose attribute value and body are XML-escaped, so
@@ -25,7 +24,7 @@ export const MAX_PARSED_CITATIONS = 100;
  * Escapes a string for use as the value of an XML attribute inside double
  * quotes. Handles `&`, `<`, `>`, `"`, `'`, plus CR/LF/TAB which XML attribute
  * values must serialize as character references. Hand-rolled because there is no
- * standard attribute-value escaper (mirrors the Go escapeXMLAttr).
+ * standard attribute-value escaper.
  */
 export function escapeXmlAttr(s: string): string {
   let out = "";
@@ -62,7 +61,7 @@ export function escapeXmlAttr(s: string): string {
   return out;
 }
 
-/** Mirrors Go's xml.isInCharacterRange — the runes XML may carry literally. */
+/** The code points XML may carry literally (the valid XML character range). */
 function isInCharacterRange(r: number): boolean {
   return (
     r === 0x09 ||
@@ -185,7 +184,7 @@ export function retrievedSources(documents: rag.Document[] | null | undefined): 
   return out;
 }
 
-/** Trims any trailing characters in `chars` from the end of `s` (Go strings.TrimRight). */
+/** Trims any trailing characters in `chars` from the end of `s`. */
 function trimRightSet(s: string, chars: string): string {
   let end = s.length;
   while (end > 0 && chars.includes(s.charAt(end - 1))) end--;
@@ -195,7 +194,7 @@ function trimRightSet(s: string, chars: string): string {
 /** The body/sources split produced by {@link parseCitations}. */
 export interface ParsedCitations {
   body: string;
-  /** Cited filenames; empty when no trailer, an empty trailer, or "Sources: none" (Go's nil slice). */
+  /** Cited filenames; empty when no trailer, an empty trailer, or "Sources: none". */
   sources: string[];
 }
 
@@ -245,8 +244,7 @@ export function parseCitations(rawInput: string): ParsedCitations {
 /**
  * Loads every .txt file under `dir`, tagging each Document with
  * Metadata[MetadataSource] = filename. Entries are read in sorted filename order
- * (matching Go's os.ReadDir) so the corpus index is deterministic. Throws when
- * no .txt files are present.
+ * so the corpus index is deterministic. Throws when no .txt files are present.
  *
  * SECURITY: readFileSync follows symlinks. Safe for the in-repo testdata/kb
  * fixture; do NOT point at a user-controlled directory without sandboxing — that

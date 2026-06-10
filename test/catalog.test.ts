@@ -4,81 +4,61 @@ import { ops } from "../src";
 
 const { num, text, bool, predicate, select, slice, json, io, time } = ops;
 
-// ── Math — float (sparsi-go math_ops.go) ─────────────────────────────────────
+// ── Math — single numeric type (no int/float split) ──────────────────────────
 
-test("math float ops", () => {
-  assert.equal(num.addFloat(2, 3), 5);
-  assert.equal(num.subFloat(5, 2), 3);
-  assert.equal(num.mulFloat(4, 2.5), 10);
-  assert.equal(num.divFloat(7, 2), 3.5);
-  assert.throws(() => num.divFloat(1, 0), /division by zero/);
-  assert.equal(num.powFloat(2, 10), 1024);
-  assert.equal(num.modFloat(7, 3), 1);
-  assert.throws(() => num.modFloat(1, 0), /modulo by zero/);
-  assert.equal(num.sumFloat([1, 2, 3]), 6);
-  assert.equal(num.minFloat([3, 1, 2]), 1);
-  assert.equal(num.maxFloat([3, 1, 2]), 3);
-  assert.throws(() => num.minFloat([]), /MinFloatOp: empty slice/);
-  assert.throws(() => num.maxFloat([]), /MaxFloatOp: empty slice/);
+test("math ops operate on one numeric type", () => {
+  assert.equal(num.add(2, 3), 5);
+  assert.equal(num.sub(5, 2), 3);
+  assert.equal(num.mul(4, 2.5), 10);
+  assert.equal(num.div(7, 2), 3.5);
+  assert.throws(() => num.div(1, 0), /division by zero/);
+  assert.equal(num.pow(2, 10), 1024);
+  assert.equal(num.mod(7, 3), 1);
+  assert.equal(num.mod(-7, 3), -1); // sign of dividend
+  assert.throws(() => num.mod(1, 0), /modulo by zero/);
+  assert.equal(num.sum([1, 2, 3]), 6);
+  assert.equal(num.min([3, 1, 2]), 1);
+  assert.equal(num.max([3, 1, 2]), 3);
+  assert.throws(() => num.min([]), /empty/);
+  assert.throws(() => num.max([]), /empty/);
   assert.deepEqual(num.packMathOperands(1, 2), { A: 1, B: 2 });
 });
 
-test("roundFloat rounds half away from zero (Go math.Round)", () => {
-  assert.equal(num.roundFloat(0.5), 1);
-  assert.equal(num.roundFloat(-0.5), -1);
-  assert.equal(num.roundFloat(2.5), 3);
-  assert.equal(num.roundFloat(-2.5), -3);
-  assert.equal(num.roundFloat(2.4), 2);
+test("round rounds half away from zero with places", () => {
+  assert.equal(num.round(0.5), 1);
+  assert.equal(num.round(-0.5), -1);
+  assert.equal(num.round(2.5), 3);
+  assert.equal(num.round(-2.5), -3);
+  assert.equal(num.round(2.4), 2);
+  assert.equal(num.round(3.14159, 2), 3.14);
 });
 
-test("clampFloat", () => {
-  assert.equal(num.clampFloat(5, 1, 10), 5);
-  assert.equal(num.clampFloat(-1, 1, 10), 1);
-  assert.equal(num.clampFloat(11, 1, 10), 10);
+test("clamp", () => {
+  assert.equal(num.clamp(5, 1, 10), 5);
+  assert.equal(num.clamp(-1, 1, 10), 1);
+  assert.equal(num.clamp(11, 1, 10), 10);
 });
 
-// ── Math — int ───────────────────────────────────────────────────────────────
-
-test("math int ops emulate Go integer semantics", () => {
-  assert.equal(num.divInt(7, 2), 3); // truncates toward zero
-  assert.equal(num.divInt(-7, 2), -3);
-  assert.throws(() => num.divInt(1, 0), /division by zero/);
-  assert.equal(num.powInt(2, 10), 1024);
-  assert.equal(num.powInt(3, 0), 1);
-  assert.throws(() => num.powInt(2, -1), /negative exponent for integer power/);
-  assert.equal(num.modInt(7, 3), 1);
-  assert.equal(num.modInt(-7, 3), -1); // sign of dividend
-  assert.throws(() => num.modInt(1, 0), /modulo by zero/);
-  assert.throws(() => num.minInt([]), /MinIntOp: empty slice/);
-  assert.throws(() => num.maxInt([]), /MaxIntOp: empty slice/);
+test("trunc truncates toward zero (the single float→int bridge)", () => {
+  assert.equal(num.trunc(3.9), 3);
+  assert.equal(num.trunc(-3.9), -3);
+  assert.equal(num.trunc(5), 5);
 });
 
-// ── Math — cast ──────────────────────────────────────────────────────────────
-
-test("math cast ops", () => {
-  assert.equal(num.intToFloat64(5), 5);
-  assert.equal(num.float64ToInt(3.9), 3);
-  assert.equal(num.float64ToInt(-3.9), -3);
-});
-
-test("formatGoFloat mirrors Go %v / strconv 'g'", () => {
-  assert.equal(num.formatGoFloat(3.14), "3.14");
-  assert.equal(num.formatGoFloat(0), "0");
-  assert.equal(num.formatGoFloat(-1.5), "-1.5");
-  assert.equal(num.formatGoFloat(100000), "100000");
-  assert.equal(num.formatGoFloat(1e21), "1e+21");
-  assert.equal(num.formatGoFloat(1e-5), "1e-05");
-  assert.equal(num.formatGoFloat(1e-4), "0.0001");
-  assert.equal(num.formatGoFloat(Infinity), "+Inf");
-  assert.equal(num.formatGoFloat(-Infinity), "-Inf");
-  assert.equal(num.formatGoFloat(NaN), "NaN");
+test("numberToString uses native JS formatting", () => {
+  assert.equal(num.numberToString(3.14), "3.14");
+  assert.equal(num.numberToString(0), "0");
+  assert.equal(num.numberToString(-1.5), "-1.5");
+  // Native JS formatting: 1e6 → "1000000", 1e21 → "1e+21".
+  assert.equal(num.numberToString(1e6), "1000000");
+  assert.equal(num.numberToString(1e21), "1e+21");
 });
 
 test("formatMathOperands mirrors MathOperands.FormatForPrompt", () => {
   assert.equal(num.formatMathOperands({ A: 1.5, B: 2 }), "A=1.5, B=2");
 });
 
-// ── String (sparsi-go string_ops.go) ─────────────────────────────────────────
+// ── String ───────────────────────────────────────────────────────────────────
 
 test("string ops", () => {
   assert.equal(text.stringLookup({ hamburger: "ketchup" }, "hamburger"), "ketchup");
@@ -101,14 +81,14 @@ test("regex ops", () => {
   assert.equal(text.regexExtract("\\d+", "abc"), ""); // no match
 });
 
-// ── String — cast (sparsi-go string_cast_ops.go) ─────────────────────────────
+// ── String — cast ────────────────────────────────────────────────────────────
 
-test("string cast ops", () => {
-  assert.equal(text.float64ToString(3.14), "3.14");
-  assert.equal(text.float64ToString(0), "0");
-  assert.equal(text.float64ToString(-1.5), "-1.5");
-  assert.equal(text.intToString(42), "42");
-  assert.equal(text.intToString(-7), "-7");
+test("string cast ops (single numberToString)", () => {
+  assert.equal(text.numberToString(3.14), "3.14");
+  assert.equal(text.numberToString(0), "0");
+  assert.equal(text.numberToString(-1.5), "-1.5");
+  assert.equal(text.numberToString(42), "42");
+  assert.equal(text.numberToString(-7), "-7");
   assert.equal(text.boolToString(true), "true");
   assert.equal(text.boolToString(false), "false");
   assert.equal(text.toString(99), "99");
@@ -116,7 +96,7 @@ test("string cast ops", () => {
   assert.equal(text.toString("hi"), "hi");
 });
 
-// ── Bool (sparsi-go bool_ops.go) ─────────────────────────────────────────────
+// ── Bool ─────────────────────────────────────────────────────────────────────
 
 test("bool ops", () => {
   assert.equal(bool.boolNot(true), false);
@@ -126,24 +106,16 @@ test("bool ops", () => {
   assert.equal(bool.boolOr(false, false), false);
 });
 
-// ── Predicate (sparsi-go predicate_ops.go) ───────────────────────────────────
+// ── Predicate ────────────────────────────────────────────────────────────────
 
-test("float predicates", () => {
-  assert.equal(predicate.ifFloatGt(2, 1), true);
-  assert.equal(predicate.ifFloatGt(1, 2), false);
-  assert.equal(predicate.ifFloatLt(1, 2), true);
-  assert.equal(predicate.ifFloatEq(1.5, 1.5), true);
-  assert.equal(predicate.ifFloatGe(2, 2), true);
-  assert.equal(predicate.ifFloatLe(2, 2), true);
-  assert.equal(predicate.ifFloatLe(3, 2), false);
-});
-
-test("int predicates", () => {
-  assert.equal(predicate.ifIntGt(2, 1), true);
-  assert.equal(predicate.ifIntLt(1, 2), true);
-  assert.equal(predicate.ifIntEq(5, 5), true);
-  assert.equal(predicate.ifIntGe(5, 5), true);
-  assert.equal(predicate.ifIntLe(6, 5), false);
+test("numeric predicates (single family)", () => {
+  assert.equal(predicate.ifGt(2, 1), true);
+  assert.equal(predicate.ifGt(1, 2), false);
+  assert.equal(predicate.ifLt(1, 2), true);
+  assert.equal(predicate.ifEq(1.5, 1.5), true);
+  assert.equal(predicate.ifGe(2, 2), true);
+  assert.equal(predicate.ifLe(2, 2), true);
+  assert.equal(predicate.ifLe(3, 2), false);
 });
 
 test("string predicates", () => {
@@ -171,22 +143,22 @@ test("emptiness and range predicates", () => {
   assert.equal(predicate.ifEmptySliceString(undefined), true);
   assert.equal(predicate.ifEmptySliceString([]), true);
   assert.equal(predicate.ifEmptySliceString(["a"]), false);
-  assert.equal(predicate.ifEmptySliceFloat64([]), true);
-  assert.equal(predicate.ifEmptySliceFloat64([1]), false);
-  assert.equal(predicate.betweenFloat(5, 1, 10), true);
-  assert.equal(predicate.betweenFloat(1, 1, 10), true); // low boundary inclusive
-  assert.equal(predicate.betweenFloat(10, 1, 10), true); // high boundary inclusive
-  assert.equal(predicate.betweenFloat(0, 1, 10), false);
-  assert.equal(predicate.betweenFloat(11, 1, 10), false);
+  assert.equal(predicate.ifEmptySliceNumber([]), true);
+  assert.equal(predicate.ifEmptySliceNumber([1]), false);
+  assert.equal(predicate.between(5, 1, 10), true);
+  assert.equal(predicate.between(1, 1, 10), true); // low boundary inclusive
+  assert.equal(predicate.between(10, 1, 10), true); // high boundary inclusive
+  assert.equal(predicate.between(0, 1, 10), false);
+  assert.equal(predicate.between(11, 1, 10), false);
 });
 
-// ── Select / Switch / Default (sparsi-go select_ops.go) ──────────────────────
+// ── Select / Switch / Default ────────────────────────────────────────────────
 
 test("select ops", () => {
   assert.equal(select.selectString(true, "yes", "no"), "yes");
   assert.equal(select.selectString(false, "yes", "no"), "no");
-  assert.equal(select.selectFloat64(true, 1.5, 2.5), 1.5);
-  assert.equal(select.selectInt(false, 10, 20), 20);
+  assert.equal(select.selectNumber(true, 1.5, 2.5), 1.5);
+  assert.equal(select.selectNumber(false, 10, 20), 20);
   assert.equal(select.selectBool(true, true, false), true);
 });
 
@@ -198,17 +170,17 @@ test("switchString", () => {
   assert.equal(select.switchString("missing", { a: "b" }), ""); // empty default
 });
 
-test("default ops (zero is a valid value)", () => {
+test("default ops (zero is a valid value; null and undefined both nil, F16)", () => {
   assert.equal(select.defaultString(undefined, "fallback"), "fallback");
+  assert.equal(select.defaultString(null, "fallback"), "fallback");
   assert.equal(select.defaultString("", "fallback"), "fallback");
   assert.equal(select.defaultString("real", "fallback"), "real");
-  assert.equal(select.defaultFloat64(undefined, 99), 99);
-  assert.equal(select.defaultFloat64(0, 99), 0);
-  assert.equal(select.defaultInt(undefined, 7), 7);
-  assert.equal(select.defaultInt(0, 7), 0);
+  assert.equal(select.defaultNumber(undefined, 99), 99);
+  assert.equal(select.defaultNumber(null, 99), 99);
+  assert.equal(select.defaultNumber(0, 99), 0);
 });
 
-// ── Slice (sparsi-go slice_ops.go) ───────────────────────────────────────────
+// ── Slice ────────────────────────────────────────────────────────────────────
 
 test("slice ops", () => {
   assert.equal(slice.sliceLen(["a", "b", "c"]), 3);
@@ -232,7 +204,7 @@ test("sliceTopK returns indices of highest scores, descending", () => {
   assert.throws(() => slice.sliceTopK([1, 2], 0), /SliceTopKOp: invalid k/);
 });
 
-// ── JSON (sparsi-go json_ops.go) ─────────────────────────────────────────────
+// ── JSON ─────────────────────────────────────────────────────────────────────
 
 test("jsonExtract traverses objects and arrays", () => {
   const doc = '{"meals":[{"name":"soup"},{"name":"salad"}],"count":2,"active":true}';
@@ -253,7 +225,7 @@ test("jsonExtract returns '' on miss, throws when required", () => {
   assert.throws(() => json.jsonExtract("not json", "a"), /JSONExtractOp: invalid JSON/);
 });
 
-// ── Time (sparsi-go time_ops.go) ─────────────────────────────────────────────
+// ── Time ─────────────────────────────────────────────────────────────────────
 
 test("cityTime supports only New York and Tokyo", () => {
   const ny = time.cityTime("New York");
@@ -265,7 +237,21 @@ test("cityTime supports only New York and Tokyo", () => {
   );
 });
 
-// ── IO (sparsi-go io_ops.go) ─────────────────────────────────────────────────
+test("cityTime reflects the exact offset across a DST boundary (F10)", () => {
+  // America/New_York: EDT (-04:00) in summer, EST (-05:00) in winter.
+  assert.ok(
+    time.cityTime("New York", new Date("2026-07-01T12:00:00Z")).endsWith("-04:00"),
+    "summer → EDT (-04:00)",
+  );
+  assert.ok(
+    time.cityTime("New York", new Date("2026-01-01T12:00:00Z")).endsWith("-05:00"),
+    "winter → EST (-05:00)",
+  );
+  // Tokyo has no DST: always +09:00.
+  assert.ok(time.cityTime("Tokyo", new Date("2026-07-01T12:00:00Z")).endsWith("+09:00"));
+});
+
+// ── IO ───────────────────────────────────────────────────────────────────────
 
 test("getEnv returns '' when unset", () => {
   process.env.SPARSI_TEST_ENV = "present";
@@ -278,22 +264,22 @@ test("fileRead wraps errors as FileReadOp", async () => {
   await assert.rejects(io.fileRead("/no/such/file/xyz.txt"), /FileReadOp:/);
 });
 
-// ── Descriptions aggregator (sparsi-go descriptions.go) ──────────────────────
+// ── Descriptions aggregator ──────────────────────────────────────────────────
 
-test("allDescriptions renders grouped op docs in Go order", () => {
+test("allDescriptions renders grouped op docs in catalog order", () => {
   const out = ops.allDescriptions();
-  assert.ok(out.startsWith("## Math — float\n"));
-  assert.ok(out.includes("## Math — int"));
+  assert.ok(out.startsWith("## Math\n"));
+  assert.ok(!out.includes("## Math — int"), "int/float Math groups are collapsed");
   assert.ok(out.includes("## String — cast"));
   assert.ok(out.includes("## Bool"));
-  assert.ok(out.includes("## Predicate — float"));
+  assert.ok(out.includes("## Predicate — numeric"));
   assert.ok(out.includes("## Select / Switch / Default"));
   assert.ok(out.includes("## Slice"));
   assert.ok(out.includes("## JSON"));
-  assert.ok(out.includes("AddFloatOp: deterministic float64 addition"));
+  assert.ok(out.includes("AddOp: deterministic numeric addition"));
 });
 
-test("allDescriptions splices Retrieval / AI / MCP groups at their Go positions", () => {
+test("allDescriptions splices Retrieval / AI / MCP groups at their catalog positions", () => {
   const out = ops.allDescriptions();
 
   // Headers present.
@@ -301,7 +287,7 @@ test("allDescriptions splices Retrieval / AI / MCP groups at their Go positions"
   assert.ok(out.includes("## AI"));
   assert.ok(out.includes("## MCP"));
 
-  // Go order: Slice → Retrieval → AI → Time → IO → JSON → MCP (last).
+  // Catalog order: Slice → Retrieval → AI → Time → IO → JSON → MCP (last).
   const idx = (h: string): number => {
     const i = out.indexOf(h);
     assert.notEqual(i, -1, `missing group header: ${h}`);

@@ -3,8 +3,7 @@
  * using Gemini embeddings + cosine similarity for retrieval, with source-file
  * citations.
  *
- * Faithful port of sparsi-go examples/rag-gemini-embed (main.go +
- * embed_retriever.go). On startup it loads every .txt file under testdata/kb/,
+ * On startup it loads every .txt file under testdata/kb/,
  * tags each Document with Metadata[source] = filename, embeds the corpus via the
  * framework's embedding-factory abstraction (rag.resolveEmbeddingClient — the
  * bundled gemini-only EnvEmbeddingClientFactory reads GEMINI_API_KEY), and
@@ -19,8 +18,7 @@
  * for any other embedder by registering a custom EmbeddingClientFactory and
  * calling ctx.resolveEmbeddingClient("<provider>", "<model>") inside Retrieve.
  *
- * The shared prompt/citation helpers live in rag-common.ts. The Go `-mcp`
- * stdio-server wrapper is intentionally omitted (§6g: optional).
+ * The shared prompt/citation helpers live in rag-common.ts.
  *
  * Requires GEMINI_API_KEY (to embed the KB + query) and CLAUDE_API_KEY (or
  * ANTHROPIC_API_KEY) for the answer op.
@@ -131,7 +129,7 @@ export class GeminiVectorRetriever implements rag.Retriever {
       ...d,
       score: cosineSimilarity(qVec, this.vectors[i]!),
     }));
-    // Array.prototype.sort is stable (ES2019+), matching Go's sort.SliceStable.
+    // Array.prototype.sort is stable (ES2019+), so equal scores keep input order.
     scored.sort((a, b) => b.score - a.score);
     return k < scored.length ? scored.slice(0, k) : scored;
   }
@@ -213,7 +211,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const args = parseArgs(process.argv.slice(2));
-  // Mirror the Go default question so the example runs with no flags.
+  // Default question so the example runs with no flags.
   const question = args.question ?? "how do I return an item?";
   if (question.trim() === "") {
     console.error('usage: rag-gemini-embed --question "<your question>" [--kb <dir>]');

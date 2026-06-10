@@ -1,3 +1,4 @@
+import { execute } from "./engine";
 import type {
   Node,
   NodeMap,
@@ -223,7 +224,11 @@ export class Workflow {
     return this.handle<T[]>(id, def.name);
   }
 
-  /** Folds an array node into a single accumulator. */
+  /**
+   * Folds an array node into a single accumulator. `initial` is required (and is
+   * snapshotted per run); there is no "first element is the seed when no init
+   * wire" mode — `initial` is always the seed.
+   */
   reduce<T, A>(
     source: Node<T[]>,
     reducer: (acc: A, item: T, ctx: RunContext) => A | Promise<A>,
@@ -246,8 +251,8 @@ export class Workflow {
 
   /** Executes the graph. Implemented in engine.ts to keep this file pure. */
   run(opts?: RunOptions): Promise<RunResult> {
-    // Lazy import avoids a static import cycle between workflow and engine.
-    const { execute } = require("./engine") as typeof import("./engine");
+    // `execute` is statically imported; the workflow↔engine value cycle is safe
+    // because it is only referenced here at call time, not at module load.
     return execute(this, opts);
   }
 }
