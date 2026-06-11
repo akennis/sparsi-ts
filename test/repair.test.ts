@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { ai } from "../src";
 import type { AICallRequest, Logger, ReasoningEntry, RunContext } from "../src";
 import { ErrRepairable } from "../src/ai/compute";
-import { withRepair } from "../src/ai/repair";
+import {
+  withRepair,
+  textCodec,
+  jsonCodec,
+  xmlCodec,
+  type RepairCodec,
+} from "../src/ai/repair";
 
 /** Captures reasoning records for assertions. */
 class CaptureLogger implements Logger {
@@ -59,10 +65,14 @@ function makeInner(opts: {
   return { state, run };
 }
 
-/** Parses a repair response: an "ERR:" prefix signals a parse failure. */
-const parse = (response: string): RepairableInput => {
-  if (response.startsWith("ERR:")) throw new Error(response.slice(4));
-  return { text: response };
+/** A trivial codec: encode renders the text field; decode treats an "ERR:" prefix
+ * as a parse failure, otherwise wraps the response as the input. */
+const codec: RepairCodec<RepairableInput> = {
+  encode: (v) => v.text,
+  decode: (response) => {
+    if (response.startsWith("ERR:")) throw new Error(response.slice(4));
+    return { text: response };
+  },
 };
 
 function userPrompt(req: AICallRequest): string {
@@ -74,7 +84,7 @@ test("WithRepair: success on first try makes no LLM call", async () => {
   const inner = makeInner({});
   const out = await withRepair(
     { text: "good" },
-    { name: "test", run: inner.run, parse },
+    { name: "test", run: inner.run, codec },
     makeCtx(client),
   );
   assert.equal(out, "ok:good");
@@ -87,7 +97,7 @@ test("WithRepair: non-repairable error propagates unchanged", async () => {
   const client = new ai.MockAIClient([]);
   const inner = makeInner({ failures: [plain] });
   await assert.rejects(
-    () => withRepair({ text: "bad" }, { name: "test", run: inner.run, parse }, makeCtx(client)),
+    () => withRepair({ text: "bad" }, { name: "test", run: inner.run, codec }, makeCtx(client)),
     (err: Error) => {
       assert.equal(err, plain, "must propagate the exact error instance");
       return true;
@@ -106,7 +116,7 @@ test("WithRepair: repairs then succeeds, with prompt sandwich", async () => {
     {
       name: "test",
       run: inner.run,
-      parse,
+      codec,
       promptPrefix: "[prefix] ",
       promptSuffix: " [suffix]",
     },
@@ -130,7 +140,7 @@ test("WithRepair: max attempts exhausted", async () => {
     () =>
       withRepair(
         { text: "broken" },
-        { name: "test", run: inner.run, parse, maxAttempts: 3 },
+        { name: "test", run: inner.run, codec, maxAttempts: 3 },
         makeCtx(client),
       ),
     /exhausted/,
@@ -148,7 +158,7 @@ test("WithRepair: unparseable response counts as an attempt", async () => {
   const client = new ai.MockAIClient(["ERR:llm gibberish", "good-second-response"]);
   const out = await withRepair(
     { text: "orig" },
-    { name: "test", run: inner.run, parse, maxAttempts: 3 },
+    { name: "test", run: inner.run, codec, maxAttempts: 3 },
     makeCtx(client),
   );
   assert.equal(out, "ok:good-second-response");
@@ -168,7 +178,7 @@ test("WithRepair: LLM API error propagates", async () => {
   });
   const inner = makeInner({ failures: [new ErrRepairable("fix me", new Error("broken"))] });
   await assert.rejects(
-    () => withRepair({ text: "orig" }, { name: "test", run: inner.run, parse }, makeCtx(client)),
+    () => withRepair({ text: "orig" }, { name: "test", run: inner.run, codec }, makeCtx(client)),
     /simulated API error/,
   );
 });
@@ -181,7 +191,7 @@ test("WithRepair: records reasoning on repair success", async () => {
   });
   await withRepair(
     { text: "broken" },
-    { name: "test", run: inner.run, parse },
+    { name: "test", run: inner.run, codec },
     makeCtx(client, { logger }),
   );
   assert.equal(logger.entries.length, 1);
@@ -193,4 +203,98 @@ test("WithRepairDescription documents the capability", () => {
   assert.match(ai.WithRepairDescription, /^WithRepair: AI-driven recovery wrapper/);
   assert.match(ai.WithRepairDescription, /default 3/);
   assert.match(ai.WithRepairDescription, /claude-sonnet-4-6/);
+});
+
+// ─── Codecs (the structured wire seam, Finding J) ────────────────────────────
+
+test("textCodec: encode is identity, decode strips fences", () => {
+  const c = textCodec();
+  assert.equal(c.encode("raw text"), "raw text");
+  assert.equal(c.decode("plain"), "plain");
+  assert.equal(c.decode("```json\n{\"a\":1}\n```"), '{"a":1}');
+  assert.equal(c.decode("  ```\nbody\n```  "), "body");
+});
+
+test("jsonCodec: round-trips and strips fences on decode", () => {
+  const c = jsonCodec<{ a: number; b: string }>();
+  const v = { a: 1, b: "x" };
+  const wire = c.encode(v);
+  assert.match(wire, /"a": 1/); // pretty-printed (default indent 2)
+  assert.deepEqual(c.decode(wire), v);
+  assert.deepEqual(c.decode("```json\n{\"a\":2,\"b\":\"y\"}\n```"), { a: 2, b: "y" });
+  assert.throws(() => c.decode("not json"), SyntaxError);
+});
+
+test("jsonCodec: indent option controls encode", () => {
+  assert.equal(jsonCodec({ indent: 0 }).encode({ a: 1 }), '{"a":1}');
+});
+
+interface XmlTicket {
+  id: string;
+  priority: string;
+  summary: string;
+  escalation_contact?: string;
+}
+
+test("xmlCodec: encode renders fields, escaping text and omitting empty optionals", () => {
+  const c = xmlCodec<XmlTicket>({
+    root: "ticket",
+    fields: ["id", "priority", "summary", "escalation_contact"],
+    optional: ["escalation_contact"],
+  });
+  const xml = c.encode({ id: "T-1", priority: "high", summary: "a & b <c>" });
+  assert.equal(
+    xml,
+    "<ticket>\n  <id>T-1</id>\n  <priority>high</priority>\n  <summary>a &amp; b &lt;c&gt;</summary>\n</ticket>",
+  );
+  // Present optional is emitted.
+  assert.match(
+    c.encode({ id: "T-2", priority: "urgent", summary: "s", escalation_contact: "x@y.z" }),
+    /<escalation_contact>x@y.z<\/escalation_contact>/,
+  );
+});
+
+test("xmlCodec: decode round-trips encode (incl. escaped text) and omits absent optionals", () => {
+  const c = xmlCodec<XmlTicket>({
+    root: "ticket",
+    fields: ["id", "priority", "summary", "escalation_contact"],
+    optional: ["escalation_contact"],
+  });
+  const v: XmlTicket = { id: "T-9", priority: "low", summary: 'q "&" <x>' };
+  assert.deepEqual(c.decode(c.encode(v)), v);
+  // Decode tolerates code fences and recovers a present optional.
+  const withEsc: XmlTicket = { id: "T-3", priority: "urgent", summary: "s", escalation_contact: "on@call.io" };
+  assert.deepEqual(c.decode("```xml\n" + c.encode(withEsc) + "\n```"), withEsc);
+});
+
+test("xmlCodec: decode throws when the root element is missing", () => {
+  const c = xmlCodec<XmlTicket>({ root: "ticket", fields: ["id"] });
+  assert.throws(() => c.decode("<other><id>T-1</id></other>"), /no <ticket> element/);
+});
+
+test("withRepair: codec.decode drives the repair (xmlCodec end-to-end)", async () => {
+  const c = xmlCodec<XmlTicket>({
+    root: "ticket",
+    fields: ["id", "priority", "summary"],
+  });
+  // The LLM "fixes" the ticket by returning corrected XML.
+  const fixed = c.encode({ id: "T-1", priority: "high", summary: "fixed" });
+  const client = new ai.MockAIClient([fixed]);
+  let runs = 0;
+  const out = await withRepair<XmlTicket, string>(
+    { id: "T-1", priority: "URGENT", summary: "bad" },
+    {
+      name: "xml",
+      codec: c,
+      run: (t) => {
+        runs++;
+        if (t.priority !== "high") throw new ErrRepairable("fix priority", new Error("bad prio"));
+        return "ok:" + t.summary;
+      },
+    },
+    makeCtx(client),
+  );
+  assert.equal(out, "ok:fixed");
+  assert.equal(runs, 2, "initial + after repair");
+  assert.equal(client.calls.length, 1);
 });

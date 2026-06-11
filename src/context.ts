@@ -20,3 +20,13 @@ export function makeContext(init: ContextInit): RunContext {
     },
   };
 }
+
+/**
+ * Derives a context that runs an op under a different AI client, preserving
+ * every other field (signal, values, logger, reasoning). This is the single,
+ * library-owned place per-op client overrides happen, so user code never
+ * reconstructs {@link RunContext} by hand to redirect `ctx.ai`.
+ */
+export function withAI(ctx: RunContext, ai: AIClient): RunContext {
+  return { ...ctx, ai };
+}

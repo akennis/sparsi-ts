@@ -4,8 +4,9 @@
  * Given an owner/repo slug (or a fixture file), it fetches the README, truncates
  * it to 8 KB, runs five AI quality probes concurrently (purpose, doc-completeness
  * score, clarity score, has-tests, has-install), computes an average score
- * deterministically, routes through one of three quality lanes (excellent / ok /
- * poor), and appends a "tests not mentioned" warning when has_tests is false.
+ * deterministically, derives one quality band (excellent / ok / poor) that both
+ * gates the narrative lanes and is reported to the caller, and appends a "tests
+ * not mentioned" warning when has_tests is false.
  *
  * Live mode fetches the README from the main and master branches in parallel and
  * picks whichever returned HTTP 200. The live fetch / fixture read and the branch
@@ -18,6 +19,7 @@
  */
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { parseArgs } from "node:util";
 import { Workflow, ai, ops } from "../src";
 
 const MAX_BYTES = 8192;
@@ -31,8 +33,10 @@ const CRIT_CLARITY = "clarity for new contributors";
 const PRED_TESTS = "does this README mention tests, CI, or automated checks?";
 const PRED_INSTALL = "does this README contain installation or usage instructions?";
 
+type Verdict = "excellent" | "ok" | "poor";
+
 interface Lane {
-  name: "excellent" | "ok" | "poor";
+  name: Verdict;
   operation: string;
 }
 
@@ -57,6 +61,13 @@ const LANES: Lane[] = [
   },
 ];
 
+/** The single source of truth for the excellent/ok/poor banding (Finding K). */
+function verdictFor(avg: number): Verdict {
+  if (avg >= EXCELLENT_MIN) return "excellent";
+  if (avg >= OK_MIN) return "ok";
+  return "poor";
+}
+
 /**
  * Caps the input to at most MAX_BYTES UTF-8 bytes.
  *
@@ -79,64 +90,45 @@ function build() {
   const readme = wf.op({ readmeRaw }, ({ readmeRaw }) => truncate(readmeRaw), { name: "truncate" });
 
   // Stage 3 — five parallel AI probes.
-  const purpose = wf.op({ readme }, ({ readme }, ctx) =>
-    ai.aiCompute<string>(readme, { operation: OP_PURPOSE, output: "string", name: "purpose" }, ctx),
-    { name: "purpose_op" });
-  const docScore = wf.op({ readme }, ({ readme }, ctx) =>
-    ai.aiScore(readme, { criterion: CRIT_DOC }, ctx), { name: "doc_score_op" });
-  const clarityScore = wf.op({ readme }, ({ readme }, ctx) =>
-    ai.aiScore(readme, { criterion: CRIT_CLARITY }, ctx), { name: "clarity_op" });
-  const hasTests = wf.op({ readme }, ({ readme }, ctx) =>
-    ai.aiBool(readme, { predicate: PRED_TESTS }, ctx), { name: "has_tests_op" });
-  const hasInstall = wf.op({ readme }, ({ readme }, ctx) =>
-    ai.aiBool(readme, { predicate: PRED_INSTALL }, ctx), { name: "has_install_op" });
+  const purpose = wf.ai.compute(readme, { operation: OP_PURPOSE, output: "string", name: "purpose" });
+  const docScore = wf.ai.score(readme, { criterion: CRIT_DOC, name: "doc_score" });
+  const clarityScore = wf.ai.score(readme, { criterion: CRIT_CLARITY, name: "clarity_score" });
+  const hasTests = wf.ai.bool(readme, { predicate: PRED_TESTS, name: "has_tests" });
+  const hasInstall = wf.ai.bool(readme, { predicate: PRED_INSTALL, name: "has_install" });
 
-  // Stage 4 — deterministic average score.
+  // Stage 4 — deterministic average score, then the single derived quality band.
   const avgScore = wf.op({ docScore, clarityScore }, ({ docScore, clarityScore }) =>
-    ops.num.div(ops.num.add(docScore, clarityScore), 2.0), { name: "avg_score_op" });
+    ops.num.div(ops.num.add(docScore, clarityScore), 2.0), { name: "avg_score" });
+  // The band is computed once, here, and shared: the lanes gate on it and the
+  // driver reports it, so the threshold logic isn't re-derived (Finding K).
+  const band = wf.op({ avgScore }, ({ avgScore }) => verdictFor(avgScore), { name: "verdict" });
 
-  // Stage 5 — three quality lanes (exactly one fires, gated on avg_score).
+  // Stage 5 — three quality lanes (exactly one fires, gated on the band). The
+  // band rides `gate`, so each lane's predicate selects on it without it being
+  // wired into the AI input (which is just the README) — no passthrough op.
   const laneNodes = LANES.map((lane) =>
-    wf.op({ readme, avgScore }, ({ readme }, ctx) =>
-      ai.aiCompute<string>(
-        readme,
-        { operation: lane.operation, output: "string", name: lane.name },
-        ctx,
-      ),
-      {
-        name: `${lane.name}_lane`,
-        condition: ({ avgScore }) =>
-          lane.name === "excellent"
-            ? avgScore >= EXCELLENT_MIN
-            : lane.name === "ok"
-              ? avgScore >= OK_MIN && avgScore < EXCELLENT_MIN
-              : avgScore < OK_MIN,
-      }),
+    wf.ai.compute(readme, {
+      operation: lane.operation,
+      output: "string",
+      name: `${lane.name}_lane`,
+      gate: { band },
+      condition: (_in, { band }) => band === lane.name,
+    }),
   );
 
   // Stage 6 — coalesce lanes + append optional "tests not mentioned" warning.
-  const narrative = wf.coalesce(laneNodes, { name: "narrative_op" });
+  const narrative = wf.coalesce(laneNodes, { name: "narrative" });
   const finalNarrative = wf.op({ narrative, hasTests }, ({ narrative, hasTests }) =>
     ops.text.stringConcat(narrative, hasTests ? "" : WARNING), { name: "final_narrative" });
 
-  return { wf, purpose, docScore, clarityScore, avgScore, hasTests, hasInstall, finalNarrative };
+  // The AI vertices, by reference — the driver reads which fired off each node's
+  // own `name`/skip status instead of a parallel label array (Finding E).
+  const aiVertices = [purpose, docScore, clarityScore, hasTests, hasInstall, ...laneNodes];
+
+  return { wf, purpose, docScore, clarityScore, avgScore, band, hasTests, hasInstall, finalNarrative, aiVertices };
 }
 
 // ─── Driver ───────────────────────────────────────────────────────────────
-
-interface Args {
-  slug?: string;
-  fixture?: string;
-}
-
-function parseArgs(argv: string[]): Args {
-  const out: Args = {};
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--slug") out.slug = argv[++i];
-    else if (argv[i] === "--fixture") out.fixture = argv[++i];
-  }
-  return out;
-}
 
 /** Live: fetch README from main + master in parallel, pick whichever is 200. */
 async function fetchReadme(slug: string): Promise<string> {
@@ -146,65 +138,61 @@ async function fetchReadme(slug: string): Promise<string> {
   return main.statusCode === 200 ? main.body : master.body;
 }
 
-function verdictFor(avg: number): "excellent" | "ok" | "poor" {
-  if (avg >= EXCELLENT_MIN) return "excellent";
-  if (avg >= OK_MIN) return "ok";
-  return "poor";
-}
-
 async function main() {
   if (!process.env.CLAUDE_API_KEY && !process.env.ANTHROPIC_API_KEY) {
     console.error("CLAUDE_API_KEY (or ANTHROPIC_API_KEY) is required");
     process.exit(1);
   }
-  const { slug, fixture } = parseArgs(process.argv.slice(2));
-  if (slug && fixture) {
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: { slug: { type: "string" }, fixture: { type: "string" } },
+  });
+  if (values.slug && values.fixture) {
     console.error("specify exactly one of --slug or --fixture");
     process.exit(2);
   }
 
   let readmeRaw: string;
   let displaySlug: string;
-  if (slug) {
-    displaySlug = slug;
-    readmeRaw = await fetchReadme(slug);
+  if (values.slug) {
+    displaySlug = values.slug;
+    readmeRaw = await fetchReadme(values.slug);
   } else {
     // --fixture, or the bundled default so the example runs with no args.
-    const path = fixture ?? join(__dirname, "testdata", "readme", "sample-readme.md");
-    displaySlug = fixture ? fixture : basename(path);
+    const path = values.fixture ?? join(__dirname, "testdata", "readme", "sample-readme.md");
+    displaySlug = values.fixture ? values.fixture : basename(path);
     readmeRaw = readFileSync(path, "utf8");
   }
 
-  const { wf, purpose, docScore, clarityScore, avgScore, hasTests, hasInstall, finalNarrative } =
-    build();
+  const {
+    wf,
+    purpose,
+    docScore,
+    clarityScore,
+    avgScore,
+    band,
+    hasTests,
+    hasInstall,
+    finalNarrative,
+    aiVertices,
+  } = build();
   const result = await wf.run({
     ai: new ai.AnthropicClient(),
     values: { readme_raw: readmeRaw },
     concurrency: 10,
   });
 
-  const avg = result.get(avgScore);
-  const verdict = verdictFor(avg);
-  const laneLabel = `AIComputeStringToStringOp(${verdict})`;
-
   const out = {
     slug: displaySlug,
     purpose: result.get(purpose),
     doc_score: result.get(docScore),
     clarity_score: result.get(clarityScore),
-    avg_score: avg,
+    avg_score: result.get(avgScore),
     has_tests: result.get(hasTests),
     has_install: result.get(hasInstall),
-    verdict,
+    verdict: result.get(band),
     narrative: result.get(finalNarrative),
-    ai_nodes: [
-      "AIComputeStringToStringOp(purpose)",
-      "AIScoreOp(doc_score)",
-      "AIScoreOp(clarity_score)",
-      "AIBoolOp(has_tests)",
-      "AIBoolOp(has_install)",
-      laneLabel,
-    ],
+    ai_nodes: aiVertices.filter((n) => !result.skipped(n)).map((n) => n.name),
   };
   console.log(JSON.stringify(out, null, 2));
 }

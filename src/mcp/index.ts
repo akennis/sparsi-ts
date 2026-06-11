@@ -51,3 +51,13 @@ export type { MCPCallOptions, MCPOutputKind } from "./call";
 
 export { mcpScript, setupMCPScript, MCPScriptOpDescription } from "./script";
 export type { MCPScriptOptions, MCPScriptCallback, MCPScriptSession } from "./script";
+
+// Side-effect import: installs the `wf.mcp` accessor on Workflow.prototype.
+import "./graph";
+export { MCPNamespace } from "./graph";
+export type {
+  MCPNodeOptions,
+  MCPCallNodeOptions,
+  MCPScriptNodeOptions,
+  MCPCallNodeResult,
+} from "./graph";

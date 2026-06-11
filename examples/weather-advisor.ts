@@ -20,6 +20,7 @@
  */
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
+import { parseArgs } from "node:util";
 import { Workflow, ai, ops } from "../src";
 
 // Deterministic thresholds.
@@ -65,12 +66,9 @@ function build() {
   });
 
   // Stage 2 — AI parse numbers (three run concurrently).
-  const tempC = wf.op({ tempStr }, ({ tempStr }, ctx) =>
-    ai.aiParseNumber(tempStr, { operation: OP_PARSE_TEMP }, ctx), { name: "parse_temp" });
-  const precipMM = wf.op({ precipStr }, ({ precipStr }, ctx) =>
-    ai.aiParseNumber(precipStr, { operation: OP_PARSE_PRECIP }, ctx), { name: "parse_precip" });
-  const windKph = wf.op({ windStr }, ({ windStr }, ctx) =>
-    ai.aiParseNumber(windStr, { operation: OP_PARSE_WIND }, ctx), { name: "parse_wind" });
+  const tempC = wf.ai.parseNumber(tempStr, { operation: OP_PARSE_TEMP, name: "parse_temp" });
+  const precipMM = wf.ai.parseNumber(precipStr, { operation: OP_PARSE_PRECIP, name: "parse_precip" });
+  const windKph = wf.ai.parseNumber(windStr, { operation: OP_PARSE_WIND, name: "parse_wind" });
 
   // Stage 3 — deterministic temperature band: three mutually exclusive lanes
   // gated on temp_c, merged by coalesce (exactly one fires per run).
@@ -97,9 +95,10 @@ function build() {
   });
 
   // Stage 5 — multi-label weather condition classifier (AI).
-  const conditions = wf.op({ descStr }, ({ descStr }, ctx) =>
-    ai.aiClassifyMultiLabel(descStr, { categories: CONDITION_CATEGORIES }, ctx),
-    { name: "classify_conditions" });
+  const conditions = wf.ai.classifyMultiLabel(descStr, {
+    categories: CONDITION_CATEGORIES,
+    name: "classify_conditions",
+  });
 
   // Stage 6 — pack all signals into one description string: 1-decimal temperature,
   // "rainy/wet"/"dry", "windy"/"calm", ", "-joined conditions or "unspecified".
@@ -114,38 +113,24 @@ function build() {
   );
 
   // Stage 7 — AI outfit advice.
-  const outfitAdvice = wf.op({ outfitInput }, ({ outfitInput }, ctx) =>
-    ai.aiCompute<string>(
-      outfitInput,
-      { operation: OP_OUTFIT, output: "string", name: "outfit_advice" },
-      ctx,
-    ),
-    { name: "outfit_advice_op" });
+  const outfitAdvice = wf.ai.compute(outfitInput, {
+    operation: OP_OUTFIT,
+    output: "string",
+    name: "outfit_advice",
+  });
 
   // Stage 8 — orthogonal unusual-weather probe + optional warning suffix.
-  const unusual = wf.op({ descStr }, ({ descStr }, ctx) =>
-    ai.aiBool(descStr, { predicate: PRED_UNUSUAL }, ctx), { name: "unusual_check" });
+  const unusual = wf.ai.bool(descStr, { predicate: PRED_UNUSUAL, name: "unusual_check" });
   const finalAdvice = wf.op(
     { outfitAdvice, unusual },
     ({ outfitAdvice, unusual }) => outfitAdvice + (unusual ? WARNING : ""),
     { name: "final_concat" },
   );
 
-  return { wf, tempC, precipMM, windKph, band, wet, windy, conditions, finalAdvice };
-}
-
-interface ParsedArgs {
-  city?: string;
-  fixture?: string;
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-  const out: ParsedArgs = {};
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--city") out.city = argv[++i];
-    else if (argv[i] === "--fixture") out.fixture = argv[++i];
-  }
-  return out;
+  // The AI vertices, in firing order — reported by their own node names rather
+  // than a parallel Go-style label array (Finding E).
+  const aiVertices = [tempC, precipMM, windKph, conditions, outfitAdvice, unusual];
+  return { wf, tempC, precipMM, windKph, band, wet, windy, conditions, finalAdvice, aiVertices };
 }
 
 async function main() {
@@ -153,14 +138,17 @@ async function main() {
     console.error("CLAUDE_API_KEY (or ANTHROPIC_API_KEY) is required");
     process.exit(1);
   }
-  const parsed = parseArgs(process.argv.slice(2));
-  if (parsed.city && parsed.fixture) {
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: { city: { type: "string" }, fixture: { type: "string" } },
+  });
+  if (values.city && values.fixture) {
     console.error("specify exactly one of --city or --fixture");
     process.exit(2);
   }
   // Default to a live "New York" lookup so the example runs with no args.
-  const city = parsed.city ?? (parsed.fixture ? undefined : "New York");
-  const fixture = parsed.fixture;
+  const city = values.city ?? (values.fixture ? undefined : "New York");
+  const fixture = values.fixture;
 
   // Resolve the wttr.in j1 body: read a fixture offline, or fetch live.
   let body: string;
@@ -179,9 +167,11 @@ async function main() {
     body = resp.body;
   }
 
-  const { wf, tempC, precipMM, windKph, band, wet, windy, conditions, finalAdvice } = build();
+  const { wf, tempC, precipMM, windKph, band, wet, windy, conditions, finalAdvice, aiVertices } =
+    build();
   const result = await wf.run({
-    ai: new ai.AnthropicClient(),
+    // Backoff on transient provider errors (5xx / 429 / "overloaded") for the run.
+    ai: ai.withRetry(new ai.AnthropicClient()),
     values: { body },
     concurrency: 10,
   });
@@ -196,14 +186,7 @@ async function main() {
     windy: result.get(windy),
     conditions: result.get(conditions),
     advice: result.get(finalAdvice),
-    ai_nodes: [
-      "AIParseNumberOp(temp)",
-      "AIParseNumberOp(precip)",
-      "AIParseNumberOp(wind)",
-      "AIClassifyMultiLabelOp(conditions)",
-      "AIComputeStringToStringOp(outfit)",
-      "AIBoolOp(unusual)",
-    ],
+    ai_nodes: aiVertices.filter((n) => !result.skipped(n)).map((n) => n.name),
   };
   console.log(JSON.stringify(out, null, 2));
 }

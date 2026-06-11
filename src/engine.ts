@@ -1,9 +1,10 @@
-import { makeContext } from "./context";
+import { makeContext, withAI } from "./context";
 import { Pool } from "./pool";
 import { SKIP } from "./types";
 import type {
   Logger,
   Node,
+  NodeStatus,
   ReasoningEntry,
   RunContext,
   RunOptions,
@@ -158,6 +159,8 @@ export async function execute(
         return resolveOp(def);
       case "coalesce":
         return resolveCoalesce(def);
+      case "zip":
+        return resolveZip(def);
       case "map":
         return resolveMap(def);
       case "filter":
@@ -171,17 +174,29 @@ export async function execute(
     def: Extract<AnyNodeDef, { kind: "op" }>,
   ): Promise<Settled> {
     const entries = Object.entries(def.inputs);
-    const values = await Promise.all(entries.map(([, depId]) => resolve(depId)));
+    const gateEntries = Object.entries(def.gate ?? {});
+    // Resolve data inputs and gate inputs together; a skip in either skips the op.
+    const values = await Promise.all(
+      [...entries, ...gateEntries].map(([, depId]) => resolve(depId)),
+    );
     const resolved: Record<string, unknown> = {};
-    for (let i = 0; i < entries.length; i++) {
+    const gate: Record<string, unknown> = {};
+    for (let i = 0; i < values.length; i++) {
       const v = values[i];
       if (isSkip(v)) return SKIP; // skip propagation
-      resolved[entries[i]![0]] = v;
+      const fromData = i < entries.length;
+      const [key] = fromData ? entries[i]! : gateEntries[i - entries.length]!;
+      (fromData ? resolved : gate)[key] = v;
     }
     if (abortedBeforeStart()) return SKIP;
+    // A per-op AI client overrides ctx.ai for this op's condition and body, so
+    // callers never reconstruct the context to redirect a single op.
+    const opCtx = def.ai ? withAI(ctx, def.ai) : ctx;
     try {
-      if (def.condition && !(await def.condition(resolved, ctx))) return SKIP;
-      const out = await pool.run(async () => def.fn(resolved, ctx));
+      if (def.condition && !(await def.condition(resolved, gate, opCtx))) {
+        return SKIP;
+      }
+      const out = await pool.run(async () => def.fn(resolved, opCtx));
       return out;
     } catch (err) {
       if (def.onError === "continue") return SKIP;
@@ -196,6 +211,19 @@ export async function execute(
     const values = await Promise.all(def.sources.map((s) => resolve(s)));
     for (const v of values) if (!isSkip(v)) return v;
     return SKIP;
+  }
+
+  async function resolveZip(
+    def: Extract<AnyNodeDef, { kind: "zip" }>,
+  ): Promise<Settled> {
+    const values = await Promise.all(def.sources.map((s) => resolve(s)));
+    if (values.some(isSkip)) return SKIP; // skip propagation
+    const arrays = values as unknown[][];
+    if (arrays.length === 0) return [];
+    const len = arrays.reduce((m, a) => Math.min(m, a.length), Infinity);
+    const out: unknown[][] = [];
+    for (let i = 0; i < len; i++) out.push(arrays.map((a) => a[i]));
+    return out;
   }
 
   async function resolveMap(
@@ -273,6 +301,20 @@ export async function execute(
     if (r.status === "fulfilled") resultMap.set(ids[i]!, r.value);
   });
 
+  const nodeStatuses = (): NodeStatus[] => {
+    const out: NodeStatus[] = [];
+    for (const [id, def] of defs) {
+      const r = resultMap.get(id);
+      const skipped = r === undefined || isSkip(r);
+      out.push(
+        skipped
+          ? { id, name: def.name, kind: def.kind, skipped: true }
+          : { id, name: def.name, kind: def.kind, skipped: false, value: r },
+      );
+    }
+    return out;
+  };
+
   return {
     get<T>(node: Node<T>): T {
       const r = resultMap.get(node.id);
@@ -288,6 +330,12 @@ export async function execute(
     },
     skipped(node: Node<unknown>): boolean {
       return isSkip(resultMap.get(node.id));
+    },
+    nodes(): NodeStatus[] {
+      return nodeStatuses();
+    },
+    firedNodes(): NodeStatus[] {
+      return nodeStatuses().filter((n) => !n.skipped);
     },
     reasoning: reasoningEntries,
   };

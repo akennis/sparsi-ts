@@ -184,13 +184,6 @@ export function retrievedSources(documents: rag.Document[] | null | undefined): 
   return out;
 }
 
-/** Trims any trailing characters in `chars` from the end of `s`. */
-function trimRightSet(s: string, chars: string): string {
-  let end = s.length;
-  while (end > 0 && chars.includes(s.charAt(end - 1))) end--;
-  return s.slice(0, end);
-}
-
 /** The body/sources split produced by {@link parseCitations}. */
 export interface ParsedCitations {
   body: string;
@@ -213,30 +206,29 @@ export interface ParsedCitations {
  */
 export function parseCitations(rawInput: string): ParsedCitations {
   const raw = rawInput.trim();
-  const marker = "sources:";
-  let idx = -1;
-  for (let i = 0; i + marker.length <= raw.length; i++) {
-    if (raw.substring(i, i + marker.length).toLowerCase() === marker) idx = i;
-  }
+  // Last "sources:" marker wins. matchAll scans the original string so the
+  // returned index stays aligned with `raw` — a lowercased copy could shift
+  // indices for runes that change length under case-folding, and the label
+  // itself is pure ASCII.
+  const idx = [...raw.matchAll(/sources:/gi)].at(-1)?.index ?? -1;
   if (idx === -1) {
     return { body: raw, sources: [] };
   }
-  const body = trimRightSet(raw.slice(0, idx), " \t\r\n");
-  const csv = raw.slice(idx + marker.length).trim();
+  const body = raw.slice(0, idx).trimEnd();
+  const csv = raw.slice(idx + "sources:".length).trim();
   if (csv === "" || csv.toLowerCase() === "none") {
     return { body, sources: [] };
   }
-  let sources: string[] = [];
-  for (const part of csv.split(",")) {
-    const s = part.trim();
-    if (s !== "") sources.push(s);
-  }
+  const sources = csv
+    .split(",")
+    .map((part) => part.trim())
+    .filter((s) => s !== "");
   if (sources.length > MAX_PARSED_CITATIONS) {
     console.warn(
-      `WARNING: citation list truncated; possible adversarial input or model misbehavior ` +
-        `(op=ParseCitationsOp original_count=${sources.length} kept=${MAX_PARSED_CITATIONS})`,
+      `WARNING: citation list truncated to ${MAX_PARSED_CITATIONS} of ${sources.length} ` +
+        `entries; possible adversarial input or model misbehavior`,
     );
-    sources = sources.slice(0, MAX_PARSED_CITATIONS);
+    return { body, sources: sources.slice(0, MAX_PARSED_CITATIONS) };
   }
   return { body, sources };
 }

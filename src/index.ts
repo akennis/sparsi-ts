@@ -11,6 +11,7 @@ export type {
   RunContext,
   RunOptions,
   RunResult,
+  NodeStatus,
   AIClient,
   AICallRequest,
   AICallResponse,

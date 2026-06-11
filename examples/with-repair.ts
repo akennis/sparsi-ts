@@ -24,9 +24,9 @@
  *   npm run example:repair -- --input @examples/testdata/with-repair/dirty-business-rule.json --reasoning
  */
 import { readFileSync } from "node:fs";
+import { parseArgs as nodeParseArgs } from "node:util";
 import { Workflow, ai } from "../src";
 import { ErrRepairable } from "../src/ai";
-import { escapeXmlText } from "./rag-common";
 
 // ─── Domain type ────────────────────────────────────────────────────────────
 
@@ -55,66 +55,20 @@ const TICKET_SCHEMA_SPEC = `Required JSON shape:
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Strips ``` fences the LLM may emit despite instructions. */
-function stripCodeFences(s: string): string {
-  s = s.trim();
-  if (!s.startsWith("```")) return s;
-  const i = s.indexOf("\n");
-  if (i >= 0) s = s.slice(i + 1);
-  const j = s.lastIndexOf("```");
-  if (j >= 0) s = s.slice(0, j);
-  return s.trim();
-}
-
 /** Quotes a string for violation messages. */
 const q = (s: string): string => JSON.stringify(s);
 
-function xmlUnescape(s: string): string {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;|&#34;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&#x9;/g, "\t")
-    .replace(/&#xA;/g, "\n")
-    .replace(/&#xD;/g, "\r")
-    .replace(/&amp;/g, "&");
-}
-
-/** Renders a ticket as indented XML, escaping element text exactly as
- * encoding/xml does (`"`→`&#34;`, control chars→hex char refs). */
-function renderTicketXML(t: TicketInput): string {
-  let xml = "<ticket>\n";
-  xml += `  <id>${escapeXmlText(t.id)}</id>\n`;
-  xml += `  <priority>${escapeXmlText(t.priority)}</priority>\n`;
-  xml += `  <reporter_email>${escapeXmlText(t.reporter_email)}</reporter_email>\n`;
-  xml += `  <summary>${escapeXmlText(t.summary)}</summary>\n`;
-  if (t.escalation_contact && t.escalation_contact.trim() !== "") {
-    xml += `  <escalation_contact>${escapeXmlText(t.escalation_contact)}</escalation_contact>\n`;
-  }
-  xml += "</ticket>";
-  return xml;
-}
-
-/** Parses the LLM's XML repair response back into a TicketInput. */
-function parseTicketXML(response: string): TicketInput {
-  const cleaned = stripCodeFences(response);
-  if (!/<ticket[\s>]/.test(cleaned)) {
-    throw new Error(`xml: no <ticket> element in response: ${q(cleaned)}`);
-  }
-  const get = (tag: string): string => {
-    const m = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(cleaned);
-    return m ? xmlUnescape((m[1] ?? "").trim()) : "";
-  };
-  const escalation = get("escalation_contact");
-  return {
-    id: get("id"),
-    priority: get("priority"),
-    reporter_email: get("reporter_email"),
-    summary: get("summary"),
-    ...(escalation ? { escalation_contact: escalation } : {}),
-  };
-}
+/**
+ * The wire codec for the struct-target (XML) repair stage. The library owns the
+ * escaping, parsing, and fence-stripping that used to be hand-rolled here:
+ * `ticketCodec.encode(t)` renders a ticket into the repair prompt and
+ * `ticketCodec.decode` parses the LLM's XML response back into a TicketInput.
+ */
+const ticketCodec = ai.xmlCodec<TicketInput>({
+  root: "ticket",
+  fields: ["id", "priority", "reporter_email", "summary", "escalation_contact"],
+  optional: ["escalation_contact"],
+});
 
 /** Reads --input, dereferencing the @file shorthand. */
 function readInput(arg: string): string {
@@ -185,7 +139,7 @@ function validateRouting(t: TicketInput): TicketInput {
         `Routing requires an escalation_contact for urgent tickets. ` +
         `Choose a sensible value based on the summary, or fall back to "oncall@example.com". ` +
         `Output the corrected ticket as XML using the same root element <ticket> and the same child elements. ` +
-        `No code fences, no commentary.\n\nInput:\n${renderTicketXML(t)}`,
+        `No code fences, no commentary.\n\nInput:\n${ticketCodec.encode(t)}`,
       new Error("urgent ticket missing escalation_contact"),
     );
   }
@@ -195,7 +149,7 @@ function validateRouting(t: TicketInput): TicketInput {
       `The ticket below has a summary longer than 280 characters (${summaryBytes}). ` +
         `Rewrite the summary to be at most 280 characters while preserving the technical detail. ` +
         `Output the corrected ticket as XML using the same root element <ticket> and the same child elements. ` +
-        `No code fences, no commentary.\n\nInput:\n${renderTicketXML(t)}`,
+        `No code fences, no commentary.\n\nInput:\n${ticketCodec.encode(t)}`,
       new Error("summary exceeds 280 chars"),
     );
   }
@@ -214,7 +168,9 @@ function build() {
       raw,
       {
         run: (text) => parseTicket(text),
-        parse: (response) => stripCodeFences(response),
+        // Raw-string target: the inner op parses+validates the JSON itself, so the
+        // codec only needs to strip any code fences off the LLM response.
+        codec: ai.textCodec(),
         maxAttempts: 3,
         promptPrefix: "You are a strict JSON corrector. Output the corrected JSON only.\n\n",
         name: "ParseTicketRepair",
@@ -229,7 +185,7 @@ function build() {
       ticket,
       {
         run: (t) => validateRouting(t),
-        parse: (response) => parseTicketXML(response),
+        codec: ticketCodec,
         maxAttempts: 2,
         promptPrefix: "You are a strict XML ticket corrector. Output corrected XML only.\n\n",
         name: "ValidateRoutingRepair",
@@ -249,12 +205,14 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const out: Args = { reasoning: false };
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--input") out.input = argv[++i];
-    else if (argv[i] === "--reasoning") out.reasoning = true;
-  }
-  return out;
+  const { values } = nodeParseArgs({
+    args: argv,
+    options: {
+      input: { type: "string" },
+      reasoning: { type: "boolean", default: false },
+    },
+  });
+  return { input: values.input, reasoning: values.reasoning ?? false };
 }
 
 async function main() {

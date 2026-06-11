@@ -18,6 +18,7 @@
  *   npm run example:recipe -- --fixture examples/testdata/recipe/carbonara.json
  */
 import { readFileSync } from "node:fs";
+import { parseArgs } from "node:util";
 import { Workflow, ai, ops } from "../src";
 
 const MODEL = "gemini-3-flash-preview";
@@ -63,16 +64,17 @@ function build() {
     name: "extract_mealname",
   });
 
-  // Stage 2 — three parallel AI extractors over the instructions text.
-  const ingredients = wf.op({ instructions }, ({ instructions }, ctx) =>
-    ai.aiExtractStringSlice(instructions, { operation: OP_INGREDIENTS, model: MODEL }, ctx),
-    { name: "ingredients" });
-  const steps = wf.op({ instructions }, ({ instructions }, ctx) =>
-    ai.aiExtractStringSlice(instructions, { operation: OP_STEPS, model: MODEL }, ctx),
-    { name: "steps" });
-  const cookMinutes = wf.op({ instructions }, ({ instructions }, ctx) =>
-    ai.aiParseNumber(instructions, { operation: OP_COOK_MINUTES, model: MODEL }, ctx),
-    { name: "cook_minutes" });
+  // Stage 2 — three parallel AI extractors over the instructions text. The run's
+  // GeminiClient default (MODEL) covers these, so no per-op model is restated.
+  const ingredients = wf.ai.extractStringSlice(instructions, {
+    operation: OP_INGREDIENTS,
+    name: "ingredients",
+  });
+  const steps = wf.ai.extractStringSlice(instructions, { operation: OP_STEPS, name: "steps" });
+  const cookMinutes = wf.ai.parseNumber(instructions, {
+    operation: OP_COOK_MINUTES,
+    name: "cook_minutes",
+  });
 
   // Stage 3 — deterministic difficulty score:
   //   ingredient_count + step_count * step_weight + cook_minutes * cook_weight.
@@ -87,30 +89,31 @@ function build() {
     { name: "difficulty_score" },
   );
 
-  // Stage 4 — three difficulty lanes, each gated by a predicate over the score
-  // and feeding a difficulty-specific AI advice op over the meal name. Exactly
-  // one fires per run.
-  const easyAdvice = wf.op(
-    { difficultyScore, mealName },
-    ({ mealName }, ctx) =>
-      ai.aiCompute<string>(mealName, { operation: OP_EASY, output: "string", name: "easy_advice", model: MODEL }, ctx),
-    { name: "easy_advice", condition: ({ difficultyScore }) => difficultyScore < EASY_MAX },
-  );
-  const mediumAdvice = wf.op(
-    { difficultyScore, mealName },
-    ({ mealName }, ctx) =>
-      ai.aiCompute<string>(mealName, { operation: OP_MEDIUM, output: "string", name: "medium_advice", model: MODEL }, ctx),
-    {
-      name: "medium_advice",
-      condition: ({ difficultyScore }) => difficultyScore >= EASY_MAX && difficultyScore < HARD_MIN,
-    },
-  );
-  const hardAdvice = wf.op(
-    { difficultyScore, mealName },
-    ({ mealName }, ctx) =>
-      ai.aiCompute<string>(mealName, { operation: OP_HARD, output: "string", name: "hard_advice", model: MODEL }, ctx),
-    { name: "hard_advice", condition: ({ difficultyScore }) => difficultyScore >= HARD_MIN },
-  );
+  // Stage 4 — three difficulty lanes, each a gated AI advice op over the meal
+  // name. `gate` carries the score to the predicate without wiring it into the
+  // AI input (which uses only the meal name), so the lane is a first-class
+  // `wf.ai.compute` node rather than a hand-wired `wf.op`. Exactly one fires.
+  const easyAdvice = wf.ai.compute(mealName, {
+    operation: OP_EASY,
+    output: "string",
+    name: "easy_advice",
+    gate: { difficultyScore },
+    condition: (_in, { difficultyScore }) => difficultyScore < EASY_MAX,
+  });
+  const mediumAdvice = wf.ai.compute(mealName, {
+    operation: OP_MEDIUM,
+    output: "string",
+    name: "medium_advice",
+    gate: { difficultyScore },
+    condition: (_in, { difficultyScore }) => difficultyScore >= EASY_MAX && difficultyScore < HARD_MIN,
+  });
+  const hardAdvice = wf.ai.compute(mealName, {
+    operation: OP_HARD,
+    output: "string",
+    name: "hard_advice",
+    gate: { difficultyScore },
+    condition: (_in, { difficultyScore }) => difficultyScore >= HARD_MIN,
+  });
 
   // Stage 5 — coalesce the three lanes into a single advice wire.
   const advice = wf.coalesce([easyAdvice, mediumAdvice, hardAdvice], { name: "advice" });
@@ -129,33 +132,22 @@ function build() {
   };
 }
 
-interface ParsedArgs {
-  meal?: string;
-  fixture?: string;
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-  const out: ParsedArgs = {};
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--meal") out.meal = argv[++i];
-    else if (argv[i] === "--fixture") out.fixture = argv[++i];
-  }
-  return out;
-}
-
 async function main() {
   if (!process.env.GEMINI_API_KEY) {
     console.error("GEMINI_API_KEY is required");
     process.exit(1);
   }
-  const parsed = parseArgs(process.argv.slice(2));
-  if (parsed.meal && parsed.fixture) {
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: { meal: { type: "string" }, fixture: { type: "string" } },
+  });
+  if (values.meal && values.fixture) {
     console.error("specify exactly one of --meal or --fixture");
     process.exit(2);
   }
   // Default to a live "Spaghetti Carbonara" lookup so the example runs with no args.
-  const meal = parsed.meal ?? (parsed.fixture ? undefined : "Spaghetti Carbonara");
-  const fixture = parsed.fixture;
+  const meal = values.meal ?? (values.fixture ? undefined : "Spaghetti Carbonara");
+  const fixture = values.fixture;
 
   // Resolve the TheMealDB search body: read a fixture offline, or fetch live.
   const live = !fixture;
@@ -188,7 +180,8 @@ async function main() {
   let result;
   try {
     result = await wf.run({
-      ai: new ai.GeminiClient({ model: MODEL }),
+      // Backoff on transient provider errors (5xx / 429 / "high demand") for the run.
+      ai: ai.withRetry(new ai.GeminiClient({ model: MODEL })),
       values: { body },
       concurrency: 10,
     });
@@ -215,18 +208,10 @@ async function main() {
     }
   }
 
-  // Record which AI vertices actually fired (skipped lanes are pruned).
-  const aiNodes: string[] = [];
-  for (const [label, node] of [
-    ["AIExtractStringSliceOp(ingredients)", ingredients],
-    ["AIExtractStringSliceOp(steps)", steps],
-    ["AIParseNumberOp(cook_minutes)", cookMinutes],
-    ["AIComputeStringToStringOp(easy.advice)", lanes.easy],
-    ["AIComputeStringToStringOp(medium.advice)", lanes.medium],
-    ["AIComputeStringToStringOp(hard.advice)", lanes.hard],
-  ] as const) {
-    if (!result.skipped(node)) aiNodes.push(label);
-  }
+  // Which AI vertices actually fired — read straight off the nodes' own names
+  // (the engine already knows skip status; no parallel label array; see Finding E).
+  const aiVertices = [ingredients, steps, cookMinutes, lanes.easy, lanes.medium, lanes.hard];
+  const aiNodes = aiVertices.filter((n) => !result.skipped(n)).map((n) => n.name);
 
   const out = {
     meal: result.get(mealName),

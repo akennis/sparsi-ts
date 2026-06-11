@@ -10,6 +10,7 @@
  * Requires GEMINI_API_KEY. Hits live network (Yahoo Finance).
  *   npm run example:stock -- --ticker AAPL
  */
+import { parseArgs } from "node:util";
 import { Workflow, ai, ops } from "../src";
 
 const MODEL = "gemini-3-flash-preview";
@@ -24,15 +25,6 @@ const NEWS_SUFFIX = "&quotesCount=0&newsCount=1";
 const PATH_PRICE = "chart.result.0.meta.regularMarketPrice";
 const PATH_PREV_CLOSE = "chart.result.0.meta.chartPreviousClose";
 const PATH_NEWS_TITLE = "news.0.title";
-
-// Final-analysis prompt fragments.
-const PROMPT_HEADER = "Analysis for stock ticker: ";
-const PROMPT_PRICE = "\nCurrent Price: ";
-const PROMPT_CHANGE = "\nPrice Change (since prev close): ";
-const PROMPT_HEADLINE = "\nLatest Headline: ";
-const PROMPT_SENTIMENT = "\nSentiment Score (0.0=bearish, 1.0=bullish): ";
-const PROMPT_FOOTER =
-  "\n\nBased on these data points, provide a concise Buy/Hold/Sell recommendation with a one-sentence rationale.";
 
 function build() {
   const wf = new Workflow();
@@ -56,61 +48,42 @@ function build() {
   const headline = wf.op({ newsJson }, ({ newsJson }) =>
     ops.json.jsonExtract(newsJson, PATH_NEWS_TITLE), { name: "extract_news" });
 
-  // AI-parse the prices (string → float64 fallback).
-  const price = wf.op({ priceRaw }, ({ priceRaw }, ctx) =>
-    ai.aiParseNumber(priceRaw, { model: MODEL }, ctx), { name: "parse_price" });
-  const prevClose = wf.op({ prevRaw }, ({ prevRaw }, ctx) =>
-    ai.aiParseNumber(prevRaw, { model: MODEL }, ctx), { name: "parse_prev" });
+  // AI-parse the prices (string → float64 fallback). The run's GeminiClient
+  // default (MODEL) covers these, so no per-op model is restated.
+  const price = wf.ai.parseNumber(priceRaw, { name: "parse_price" });
+  const prevClose = wf.ai.parseNumber(prevRaw, { name: "parse_prev" });
 
   // Deterministic change.
   const change = wf.op({ price, prevClose }, ({ price, prevClose }) =>
     ops.num.sub(price, prevClose), { name: "calc_change" });
 
   // AI sentiment in [0,1].
-  const sentiment = wf.op({ headline }, ({ headline }, ctx) =>
-    ai.aiScore(
-      headline,
-      { criterion: "The headline indicates a positive/bullish outlook for the company", model: MODEL },
-      ctx,
-    ),
-    { name: "sentiment" },
-  );
+  const sentiment = wf.ai.score(headline, {
+    criterion: "The headline indicates a positive/bullish outlook for the company",
+    name: "sentiment",
+  });
 
   // Build the final prompt in one op, with default float formatting for change +
   // sentiment.
   const finalPrompt = wf.op(
     { ticker, priceRaw, change, headline, sentiment },
     ({ ticker, priceRaw, change, headline, sentiment }) =>
-      PROMPT_HEADER + ticker +
-      PROMPT_PRICE + priceRaw +
-      PROMPT_CHANGE + ops.text.numberToString(change) +
-      PROMPT_HEADLINE + headline +
-      PROMPT_SENTIMENT + ops.text.numberToString(sentiment) +
-      PROMPT_FOOTER,
+      `Analysis for stock ticker: ${ticker}\n` +
+      `Current Price: ${priceRaw}\n` +
+      `Price Change (since prev close): ${ops.text.numberToString(change)}\n` +
+      `Latest Headline: ${headline}\n` +
+      `Sentiment Score (0.0=bearish, 1.0=bullish): ${ops.text.numberToString(sentiment)}\n\n` +
+      `Based on these data points, provide a concise Buy/Hold/Sell recommendation with a one-sentence rationale.`,
     { name: "build_prompt" },
   );
 
-  const recommendation = wf.op({ finalPrompt }, ({ finalPrompt }, ctx) =>
-    ai.aiCompute<string>(
-      finalPrompt,
-      {
-        operation: "Analyze the given stock data and sentiment to provide a Buy/Hold/Sell recommendation.",
-        output: "string",
-        name: "recommend",
-        model: MODEL,
-      },
-      ctx,
-    ),
-    { name: "recommend" },
-  );
+  const recommendation = wf.ai.compute(finalPrompt, {
+    operation: "Analyze the given stock data and sentiment to provide a Buy/Hold/Sell recommendation.",
+    output: "string",
+    name: "recommend",
+  });
 
   return { wf, recommendation };
-}
-
-function parseTicker(argv: string[]): string {
-  const i = argv.indexOf("--ticker");
-  const raw = (i >= 0 ? argv[i + 1] : undefined) ?? "AAPL";
-  return raw.toUpperCase();
 }
 
 async function main() {
@@ -118,10 +91,15 @@ async function main() {
     console.error("GEMINI_API_KEY is required");
     process.exit(1);
   }
-  const ticker = parseTicker(process.argv.slice(2));
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: { ticker: { type: "string" } },
+  });
+  const ticker = (values.ticker ?? "AAPL").toUpperCase();
   const { wf, recommendation } = build();
   const result = await wf.run({
-    ai: new ai.GeminiClient({ model: MODEL }),
+    // Backoff on transient provider errors (5xx / 429 / "overloaded") for the run.
+    ai: ai.withRetry(new ai.GeminiClient({ model: MODEL })),
     values: { ticker },
     concurrency: 4,
   });

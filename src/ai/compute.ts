@@ -33,6 +33,26 @@ export type OutputKind =
   | "number[]"
   | "map";
 
+/**
+ * The value type an {@link OutputKind} parses to. Lets callers state the output
+ * shape *once* (as the `output` kind) and have the result type follow, instead
+ * of restating it as a separate `<O>` type parameter that can silently disagree
+ * with the kind string.
+ */
+export type AIComputeResult<K extends OutputKind> = K extends "string"
+  ? string
+  : K extends "number"
+    ? number
+    : K extends "boolean"
+      ? boolean
+      : K extends "string[]"
+        ? string[]
+        : K extends "number[]"
+          ? number[]
+          : K extends "map"
+            ? Record<string, string>
+            : never;
+
 const FORMAT: Record<OutputKind, string> = {
   string: "Respond with the result string only. No quotes, no punctuation, no explanation.",
   number:

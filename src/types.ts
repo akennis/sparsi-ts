@@ -49,6 +49,13 @@ export interface OpOptions {
    * - `"continue"`: treat the node as skipped and keep going.
    */
   onError?: "stop" | "continue";
+  /**
+   * AI client this op runs under, overriding {@link RunOptions.ai} for this op
+   * only. The engine swaps `ctx.ai` for the op's body and condition — callers no
+   * longer reconstruct {@link RunContext} to redirect a single op to a different
+   * client/model.
+   */
+  ai?: AIClient;
 }
 
 /**
@@ -128,6 +135,22 @@ export interface RunOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * A node's identity and outcome, as enumerated by {@link RunResult.nodes}. Lets
+ * callers report which nodes fired without maintaining parallel label arrays:
+ * the node already carries its `name`, and the engine already knows whether it
+ * skipped.
+ */
+export interface NodeStatus {
+  readonly id: string;
+  readonly name: string;
+  /** The node-definition kind (e.g. `"op"`, `"map"`, `"coalesce"`). */
+  readonly kind: string;
+  readonly skipped: boolean;
+  /** The produced value; absent when `skipped` is true. */
+  readonly value?: unknown;
+}
+
 /** The outcome of a completed run. */
 export interface RunResult {
   /** The value a node produced. Throws if the node was skipped. */
@@ -136,6 +159,10 @@ export interface RunResult {
   getOr<T>(node: Node<T>, fallback: T): T;
   /** Whether a node resolved to {@link SKIP}. */
   skipped(node: Node<unknown>): boolean;
+  /** Every node in the graph with its name, kind, and skip status, in graph order. */
+  nodes(): NodeStatus[];
+  /** Just the nodes that produced a value (i.e. did not skip). */
+  firedNodes(): NodeStatus[];
   /** Reasoning records captured during the run, in completion order. */
   readonly reasoning: ReasoningEntry[];
 }

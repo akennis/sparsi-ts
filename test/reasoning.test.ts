@@ -139,7 +139,7 @@ test("WithRepair records an Inputs snapshot on repair success", async () => {
             if (input !== "fixed") throw new ai.ErrRepairable("Please fix it", new Error("bad input"));
             return "ok:" + input;
           },
-          parse: (text) => text.trim(),
+          codec: { encode: (v) => v, decode: (text) => text.trim() },
         },
         ctx,
       ),

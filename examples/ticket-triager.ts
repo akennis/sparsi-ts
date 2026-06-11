@@ -6,7 +6,7 @@
  * classifies it via modeSelect into one of {billing, bug, feature, other}, and
  * routes the ticket through a category-specific extraction lane. The billing,
  * bug, and feature lanes are DAG branches gated on the classification; only the
- * matching lane fires, and its per-lane JSON summary coalesces into a final
+ * matching lane fires, and its per-lane brief coalesces into a final, typed
  * brief. Tickets that classify as "other" are intentionally unsupported: the
  * "other" lane fails the run instead of producing a brief.
  *
@@ -15,9 +15,9 @@
  * billing, bug, feature). The factory maps the ref onto an env var
  * (CLAUDE_API_KEY_<COSTCENTER>) so each team can be billed on its own API key,
  * falling back to CLAUDE_API_KEY when the per-cost-center key is unset so the
- * demo still runs with the default single-key setup. Because the AI ops read
- * their client from the run context, each lane passes a context whose client was
- * resolved for that lane's cost center.
+ * demo still runs with the default single-key setup. Each lane selects its
+ * cost-center client through the per-op `ai` option, so no AI op has to
+ * reconstruct the engine-owned run context to redirect itself.
  *
  * Env vars keep the example self-contained. A production factory would resolve
  * the ref against a real credential store — AWS Secrets Manager, GCP Secret
@@ -31,8 +31,9 @@
  *   npm run example:ticket -- --ticket path/to/ticket.txt
  */
 import { readFileSync } from "node:fs";
+import { parseArgs } from "node:util";
 import { Workflow, ai } from "../src";
-import type { AIClient, RunContext, ReasoningEntry } from "../src";
+import type { AIClient, ReasoningEntry } from "../src";
 
 const CATEGORIES = ["billing", "bug", "feature", "other"];
 
@@ -93,7 +94,7 @@ class CostCenterFactory implements ai.AIClientFactory {
         `CostCenterFactory: no API key for cost center "${ref}" (looked at ${primary}, then CLAUDE_API_KEY)`,
       );
     }
-    console.error(`ticket-triager.factory.resolve cost_center=${ref || "(default)"} env_var=${source}`);
+    console.error(`ticket-triager: resolved cost center "${ref || "default"}" from ${source}`);
 
     const client = new ai.AnthropicClient({ apiKey: key });
     this.cache.set(ref, client);
@@ -101,86 +102,134 @@ class CostCenterFactory implements ai.AIClientFactory {
   }
 }
 
-/** Builds a run context whose AI client is resolved for `costCenter`. */
-function withCostCenter(ctx: RunContext, costCenter: string): RunContext {
-  return { ...ctx, ai: ai.newAIClient({ provider: "claude", ref: costCenter }) };
-}
-
 // ─── Graph ───────────────────────────────────────────────────────────────────
+
+// Per-lane brief shapes. Each lane is self-describing — it carries its own
+// `category` literal — so `coalesce` returns the union and the driver reads the
+// winning brief directly, with no JSON-stringify/parse round-trip and no
+// post-hoc mutation (Finding F).
+interface BillingBrief {
+  category: "billing";
+  details: Record<string, string>;
+  refund_amount_usd: number;
+}
+interface BugBrief {
+  category: "bug";
+  details: { reproduction_steps: string[]; severity: number; is_regression: boolean };
+}
+interface FeatureBrief {
+  category: "feature";
+  details: { description: string; business_impact: number };
+}
 
 function build() {
   const wf = new Workflow();
   const ticket = wf.input<string>("ticket");
 
+  // Each lane runs under its own cost-center client, resolved through the
+  // factory by ref and passed as the per-op `ai` option (Finding B) — no AI op
+  // reconstructs the engine-owned RunContext to redirect itself. The factory
+  // caches per ref, so these are the same clients each lane's ops share.
+  const triageAI = ai.newAIClient({ provider: "claude", ref: "triage" });
+  const billingAI = ai.newAIClient({ provider: "claude", ref: "billing" });
+  const bugAI = ai.newAIClient({ provider: "claude", ref: "bug" });
+  const featureAI = ai.newAIClient({ provider: "claude", ref: "feature" });
+
   // Classify into one of 4 categories via a single AI call (cost center: triage).
-  const cls = wf.op({ ticket }, ({ ticket }, ctx) =>
-    ai.modeSelect(ticket, { categories: CATEGORIES }, withCostCenter(ctx, "triage")),
-    { name: "classify" });
+  const cls = wf.ai.modeSelect(ticket, { categories: CATEGORIES, name: "classify", ai: triageAI });
+
+  // Each lane's AI ops gate on the classification. The class rides `gate` so the
+  // predicate sees it without it being wired into the AI input (which is just the
+  // ticket) — no identity passthrough op (Finding G). A skipped gate skips the
+  // op, which propagates to the lane's encode node.
+  const billingGate = (_in: unknown, { cls }: { cls: string }) => cls === "billing";
+  const bugGate = (_in: unknown, { cls }: { cls: string }) => cls === "bug";
+  const featureGate = (_in: unknown, { cls }: { cls: string }) => cls === "feature";
 
   // ── Billing lane ────────────────────────────────────────────────────────
-  const billingBody = wf.op({ cls, ticket }, ({ ticket }) => ticket, {
-    name: "gate_billing",
-    condition: ({ cls }) => cls === "billing",
+  const billingMap = wf.ai.extractMap(ticket, {
+    operation: OP_BILLING_FIELDS,
+    name: "billing_extract",
+    ai: billingAI,
+    gate: { cls },
+    condition: billingGate,
   });
-  const billingMap = wf.op({ billingBody }, ({ billingBody }, ctx) =>
-    ai.aiExtractMap(billingBody, { operation: OP_BILLING_FIELDS }, withCostCenter(ctx, "billing")),
-    { name: "billing_extract" });
-  const billingRefund = wf.op({ billingBody }, ({ billingBody }, ctx) =>
-    ai.aiParseNumber(billingBody, { operation: OP_BILLING_REFUND }, withCostCenter(ctx, "billing")),
-    { name: "billing_refund" });
-  const billingJson = wf.op({ billingMap, billingRefund }, ({ billingMap, billingRefund }) =>
-    JSON.stringify({ category: "billing", details: billingMap, refund_amount_usd: billingRefund }),
-    { name: "billing_encode" });
+  const billingRefund = wf.ai.parseNumber(ticket, {
+    operation: OP_BILLING_REFUND,
+    name: "billing_refund",
+    ai: billingAI,
+    gate: { cls },
+    condition: billingGate,
+  });
+  const billingBrief = wf.op(
+    { billingMap, billingRefund },
+    ({ billingMap, billingRefund }): BillingBrief => ({
+      category: "billing",
+      details: billingMap,
+      refund_amount_usd: billingRefund,
+    }),
+    { name: "billing_encode" },
+  );
 
   // ── Bug lane ──────────────────────────────────────────────────────────────
-  const bugBody = wf.op({ cls, ticket }, ({ ticket }) => ticket, {
-    name: "gate_bug",
-    condition: ({ cls }) => cls === "bug",
+  const bugSteps = wf.ai.extractStringSlice(ticket, {
+    operation: OP_BUG_STEPS,
+    name: "bug_steps",
+    ai: bugAI,
+    gate: { cls },
+    condition: bugGate,
   });
-  const bugSteps = wf.op({ bugBody }, ({ bugBody }, ctx) =>
-    ai.aiExtractStringSlice(bugBody, { operation: OP_BUG_STEPS }, withCostCenter(ctx, "bug")),
-    { name: "bug_steps" });
-  const bugSeverity = wf.op({ bugBody }, ({ bugBody }, ctx) =>
-    ai.aiScore(bugBody, { criterion: CRIT_BUG_SEVERITY }, withCostCenter(ctx, "bug")),
-    { name: "bug_severity" });
-  const bugRegression = wf.op({ bugBody }, ({ bugBody }, ctx) =>
-    ai.aiBool(bugBody, { predicate: PRED_BUG_REGRESSION }, withCostCenter(ctx, "bug")),
-    { name: "bug_regression" });
-  const bugJson = wf.op(
+  const bugSeverity = wf.ai.score(ticket, {
+    criterion: CRIT_BUG_SEVERITY,
+    name: "bug_severity",
+    ai: bugAI,
+    gate: { cls },
+    condition: bugGate,
+  });
+  const bugRegression = wf.ai.bool(ticket, {
+    predicate: PRED_BUG_REGRESSION,
+    name: "bug_regression",
+    ai: bugAI,
+    gate: { cls },
+    condition: bugGate,
+  });
+  const bugBrief = wf.op(
     { bugSteps, bugSeverity, bugRegression },
-    ({ bugSteps, bugSeverity, bugRegression }) =>
-      JSON.stringify({
-        category: "bug",
-        details: {
-          reproduction_steps: bugSteps,
-          severity: bugSeverity,
-          is_regression: bugRegression,
-        },
-      }),
+    ({ bugSteps, bugSeverity, bugRegression }): BugBrief => ({
+      category: "bug",
+      details: {
+        reproduction_steps: bugSteps,
+        severity: bugSeverity,
+        is_regression: bugRegression,
+      },
+    }),
     { name: "bug_encode" },
   );
 
   // ── Feature lane ────────────────────────────────────────────────────────
-  const featureBody = wf.op({ cls, ticket }, ({ ticket }) => ticket, {
-    name: "gate_feature",
-    condition: ({ cls }) => cls === "feature",
+  const featureDesc = wf.ai.compute(ticket, {
+    operation: OP_FEATURE_SUMMARY,
+    output: "string",
+    name: "feature_summary",
+    ai: featureAI,
+    gate: { cls },
+    condition: featureGate,
   });
-  const featureDesc = wf.op({ featureBody }, ({ featureBody }, ctx) =>
-    ai.aiCompute<string>(
-      featureBody,
-      { operation: OP_FEATURE_SUMMARY, output: "string", name: "feature_summary" },
-      withCostCenter(ctx, "feature"),
-    ),
-    { name: "feature_summary" });
-  const featureImpact = wf.op({ featureBody }, ({ featureBody }, ctx) =>
-    ai.aiScore(featureBody, { criterion: CRIT_FEATURE_IMPACT }, withCostCenter(ctx, "feature")),
-    { name: "feature_impact" });
-  const featureJson = wf.op({ featureDesc, featureImpact }, ({ featureDesc, featureImpact }) =>
-    JSON.stringify({
+  const featureImpact = wf.ai.score(ticket, {
+    criterion: CRIT_FEATURE_IMPACT,
+    name: "feature_impact",
+    ai: featureAI,
+    gate: { cls },
+    condition: featureGate,
+  });
+  const featureBrief = wf.op(
+    { featureDesc, featureImpact },
+    ({ featureDesc, featureImpact }): FeatureBrief => ({
       category: "feature",
       details: { description: featureDesc, business_impact: featureImpact },
     }),
-    { name: "feature_encode" });
+    { name: "feature_encode" },
+  );
 
   // ── Other lane: unsupported → fail the run ────────────────────────────────
   // Gated on the "other" classification. The engine resolves every node, so when
@@ -194,42 +243,30 @@ function build() {
     { name: "other_reject", condition: ({ cls }) => cls === "other" },
   );
 
-  // ── Coalesce: the one lane that ran wins ──────────────────────────────────
-  const finalBrief = wf.coalesce([billingJson, bugJson, featureJson], { name: "final" });
+  // ── Coalesce: the one lane that ran wins; the union keeps each lane's shape ─
+  const finalBrief = wf.coalesce([billingBrief, bugBrief, featureBrief], { name: "final" });
 
   return {
     wf,
-    cls,
     finalBrief,
     otherReject,
-    aiCandidates: [
-      ["ModeSelectOp", cls],
-      ["AIExtractMapOp(billing.extract)", billingMap],
-      ["AIParseNumberOp(billing.refund)", billingRefund],
-      ["AIExtractStringSliceOp(bug.steps)", bugSteps],
-      ["AIScoreOp(bug.severity)", bugSeverity],
-      ["AIBoolOp(bug.regression)", bugRegression],
-      ["AIComputeStringToStringOp(feature.summary)", featureDesc],
-      ["AIScoreOp(feature.impact)", featureImpact],
-    ] as const,
+    // The AI vertices, by reference. The driver reports which fired by reading
+    // each node's own `name` and skip status, instead of a hand-maintained
+    // parallel array of label strings (Finding E).
+    aiVertices: [
+      cls,
+      billingMap,
+      billingRefund,
+      bugSteps,
+      bugSeverity,
+      bugRegression,
+      featureDesc,
+      featureImpact,
+    ],
   };
 }
 
 // ─── Driver ────────────────────────────────────────────────────────────────
-
-interface ParsedArgs {
-  ticket?: string;
-  ticketText?: string;
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-  const out: ParsedArgs = {};
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--ticket") out.ticket = argv[++i];
-    else if (argv[i] === "--ticket-text") out.ticketText = argv[++i];
-  }
-  return out;
-}
 
 async function main() {
   if (!process.env.CLAUDE_API_KEY && !process.env.ANTHROPIC_API_KEY) {
@@ -237,16 +274,21 @@ async function main() {
     console.error("CLAUDE_API_KEY (or per-cost-center CLAUDE_API_KEY_<COSTCENTER>) is required");
     process.exit(1);
   }
-  const { ticket, ticketText } = parseArgs(process.argv.slice(2));
-  if (ticket && ticketText) {
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: { ticket: { type: "string" }, "ticket-text": { type: "string" } },
+  });
+  const ticketArg = values.ticket;
+  const ticketText = values["ticket-text"];
+  if (ticketArg && ticketText) {
     console.error("provide either --ticket or --ticket-text, not both");
     process.exit(2);
   }
   let ticketBody: string;
   if (ticketText !== undefined) {
     ticketBody = ticketText.trim();
-  } else if (ticket !== undefined) {
-    ticketBody = readFileSync(ticket, "utf8").trim();
+  } else if (ticketArg !== undefined) {
+    ticketBody = readFileSync(ticketArg, "utf8").trim();
   } else {
     // Default to a built-in billing ticket so the example runs with no args.
     ticketBody = DEFAULT_TICKET;
@@ -259,20 +301,19 @@ async function main() {
   // Route every AI op through the per-cost-center factory.
   ai.setDefaultAIClientFactory(new CostCenterFactory());
 
-  const { wf, cls, finalBrief, aiCandidates } = build();
+  const { wf, finalBrief, aiVertices } = build();
   const result = await wf.run({
     reasoning: true,
     values: { ticket: ticketBody },
     concurrency: 10,
   });
 
-  // The coalesced brief is a JSON string; parse it, then stamp the resolved
-  // category and the AI vertices that actually fired.
-  const brief = JSON.parse(result.get(finalBrief)) as Record<string, unknown>;
-  brief.category = result.get(cls);
-  brief.ai_nodes = aiCandidates.filter(([, node]) => !result.skipped(node)).map(([label]) => label);
-
-  console.log(JSON.stringify(brief, null, 2));
+  // The coalesced brief is the typed union from the lane that fired — read it
+  // directly (no JSON.parse, no mutation). `category` is the lane's own literal
+  // (Finding F); `ai_nodes` reads the fired vertices' names (Finding E).
+  const brief = result.get(finalBrief);
+  const aiNodes = aiVertices.filter((n) => !result.skipped(n)).map((n) => n.name);
+  console.log(JSON.stringify({ ...brief, ai_nodes: aiNodes }, null, 2));
   dumpReasoning(result.reasoning);
 }
 

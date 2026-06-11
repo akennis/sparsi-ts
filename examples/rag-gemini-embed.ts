@@ -25,6 +25,7 @@
  *   npm run example:rag-gemini-embed -- --question "how do I return an item?"
  */
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 import { Workflow, ai, rag } from "../src";
 import { buildRagPrompt, loadKb, parseCitations, retrievedSources, sourceFilename } from "./rag-common";
 
@@ -45,12 +46,11 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;
   let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    const ai = a[i]!;
-    const bi = b[i]!;
-    dot += ai * bi;
-    na += ai * ai;
-    nb += bi * bi;
+  for (const [i, av] of a.entries()) {
+    const bv = b[i]!;
+    dot += av * bv;
+    na += av * av;
+    nb += bv * bv;
   }
   if (na === 0 || nb === 0) return 0;
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
@@ -63,10 +63,15 @@ export function cosineSimilarity(a: number[], b: number[]): number {
  * env vars itself — that is the point of the credential plumbing. The corpus is
  * immutable after {@link create} returns, so concurrent Retrieve calls are safe.
  */
+/** One indexed document paired with its corpus embedding. */
+interface EmbeddedDoc {
+  doc: rag.Document;
+  vector: number[];
+}
+
 export class GeminiVectorRetriever implements rag.Retriever {
   private constructor(
-    private readonly docs: rag.Document[],
-    private readonly vectors: number[][],
+    private readonly entries: EmbeddedDoc[],
     private readonly model: string,
     private readonly indexClient: rag.EmbeddingClient,
   ) {}
@@ -113,11 +118,12 @@ export class GeminiVectorRetriever implements rag.Retriever {
         `GeminiVectorRetriever: embedding count mismatch: got ${vectors.length}, want ${docs.length}`,
       );
     }
-    return new GeminiVectorRetriever(docs, vectors, model, client);
+    const entries = docs.map((doc, i) => ({ doc, vector: vectors[i]! }));
+    return new GeminiVectorRetriever(entries, model, client);
   }
 
   async retrieve(query: string, k: number, ctx: rag.RetrievalContext): Promise<rag.Document[]> {
-    if (query === "" || this.docs.length === 0) return [];
+    if (query === "" || this.entries.length === 0) return [];
     const client = await this.queryClient(ctx);
     const qVecs = await client.embed([query], ctx.signal);
     if (qVecs.length !== 1) {
@@ -125,9 +131,9 @@ export class GeminiVectorRetriever implements rag.Retriever {
     }
     const qVec = qVecs[0]!;
 
-    const scored: rag.Document[] = this.docs.map((d, i) => ({
-      ...d,
-      score: cosineSimilarity(qVec, this.vectors[i]!),
+    const scored: rag.Document[] = this.entries.map(({ doc, vector }) => ({
+      ...doc,
+      score: cosineSimilarity(qVec, vector),
     }));
     // Array.prototype.sort is stable (ES2019+), so equal scores keep input order.
     scored.sort((a, b) => b.score - a.score);
@@ -155,9 +161,7 @@ function build() {
   const wf = new Workflow();
   const question = wf.input<string>("question");
 
-  const retrieved = wf.op({ question }, ({ question }, ctx) => rag.retrieve(question, { k: 3 }, ctx), {
-    name: "retrieve",
-  });
+  const retrieved = wf.rag.retrieve(question, { k: 3, name: "retrieve" });
   const documents = wf.op({ retrieved }, ({ retrieved }) => retrieved.documents, {
     name: "documents",
   });
@@ -168,38 +172,26 @@ function build() {
     name: "retrieved_sources",
   });
 
-  const rawAnswer = wf.op({ prompt }, ({ prompt }, ctx) =>
-    ai.aiCompute<string>(prompt, { operation: ANSWER_OP, output: "string", model: MODEL, name: "answer" }, ctx),
-    { name: "answer" });
+  const rawAnswer = wf.ai.compute(prompt, {
+    operation: ANSWER_OP,
+    output: "string",
+    model: MODEL,
+    name: "answer",
+  });
   const parsed = wf.op({ rawAnswer }, ({ rawAnswer }) => parseCitations(rawAnswer), {
     name: "parse_citations",
   });
   const body = wf.op({ parsed }, ({ parsed }) => parsed.body, { name: "body" });
   const citedSources = wf.op({ parsed }, ({ parsed }) => parsed.sources, { name: "sources" });
 
-  const validated = wf.op({ citedSources, allowedSources }, ({ citedSources, allowedSources }) =>
-    rag.validateCitations(citedSources, allowedSources), { name: "validate_citations" });
+  const validated = wf.rag.validateCitations(citedSources, allowedSources, {
+    name: "validate_citations",
+  });
 
   return { wf, documents, body, validated };
 }
 
 // ─── Driver ─────────────────────────────────────────────────────────────────
-
-interface Args {
-  question?: string;
-  kb?: string;
-  indexTimeoutMs?: number;
-}
-
-function parseArgs(argv: string[]): Args {
-  const out: Args = {};
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--question") out.question = argv[++i];
-    else if (argv[i] === "--kb") out.kb = argv[++i];
-    else if (argv[i] === "--index-timeout-ms") out.indexTimeoutMs = Number(argv[++i]);
-  }
-  return out;
-}
 
 async function main(): Promise<void> {
   if (!process.env.GEMINI_API_KEY) {
@@ -210,23 +202,28 @@ async function main(): Promise<void> {
     console.error("CLAUDE_API_KEY (or ANTHROPIC_API_KEY) is required for the answer op");
     process.exit(1);
   }
-  const args = parseArgs(process.argv.slice(2));
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      question: { type: "string" },
+      kb: { type: "string" },
+      "index-timeout-ms": { type: "string" },
+    },
+  });
   // Default question so the example runs with no flags.
-  const question = args.question ?? "how do I return an item?";
+  const question = values.question ?? "how do I return an item?";
   if (question.trim() === "") {
     console.error('usage: rag-gemini-embed --question "<your question>" [--kb <dir>]');
     process.exit(2);
   }
 
-  const kbDir = args.kb ?? join(__dirname, "testdata", "kb");
+  const kbDir = values.kb ?? join(__dirname, "testdata", "kb");
   const docs = loadKb(kbDir);
 
-  const indexTimeoutMs = args.indexTimeoutMs ?? 30_000;
+  const indexTimeoutMs = values["index-timeout-ms"] ? Number(values["index-timeout-ms"]) : 30_000;
   const indexController = new AbortController();
   const indexTimer = setTimeout(() => indexController.abort(), indexTimeoutMs);
-  process.stderr.write(
-    `rag-gemini-embed.indexing doc_count=${docs.length} model=${EMBEDDING_MODEL}\n`,
-  );
+  process.stderr.write(`Indexing ${docs.length} document(s) with ${EMBEDDING_MODEL}…\n`);
   let retriever: GeminiVectorRetriever;
   try {
     retriever = await GeminiVectorRetriever.create(docs, EMBEDDING_MODEL, indexController.signal);

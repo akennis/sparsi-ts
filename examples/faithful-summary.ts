@@ -9,9 +9,9 @@
  * is more likely to surface unsupported claims than re-asking the model that wrote
  * the summary.
  *
- * The provider for an AI op is the injected `ctx.ai` client: Claude is the
- * run-wide default, and the verify op runs against a derived context whose `ai` is
- * a Gemini client.
+ * The provider for an AI op is selected per node via the `ai` option: Claude is
+ * the run-wide default, and the verify op overrides it with a Gemini client —
+ * no run-context surgery.
  *
  * When neither --file nor --text is given, this falls back to a built-in SAMPLE so
  * it runs with no args. `source_length` is the UTF-8 byte length of the source.
@@ -21,6 +21,7 @@
  *   npm run example:faithful -- --file path/to/article.txt
  */
 import { readFileSync } from "node:fs";
+import { parseArgs } from "node:util";
 import { Workflow, ai, type AIClient } from "../src";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
@@ -42,39 +43,27 @@ function build(gemini: AIClient) {
   const wf = new Workflow();
   const source = wf.input<string>("source");
 
-  // Claude writes the summary (run-wide default ctx.ai).
-  const summary = wf.op({ source }, ({ source }, ctx) =>
-    ai.aiCompute<string>(
-      source,
-      { operation: OP_SUMMARIZE, output: "string", name: "summarize", model: CLAUDE_MODEL },
-      ctx,
-    ),
-    { name: "summarize" });
+  // Claude writes the summary (run-wide default client).
+  const summary = wf.ai.compute(source, {
+    operation: OP_SUMMARIZE,
+    output: "string",
+    name: "summarize",
+    model: CLAUDE_MODEL,
+  });
 
   // Deterministic prompt assembly.
   const query = wf.op({ source, summary }, ({ source, summary }) =>
     `Source document:\n${source}\n\nSummary to verify:\n${summary}`, { name: "format_check" });
 
-  // Gemini independently fact-checks — same op, a Gemini-backed context.
-  const faithful = wf.op({ query }, ({ query }, ctx) =>
-    ai.aiBool(query, { predicate: PRED_FAITHFUL, model: GEMINI_MODEL }, { ...ctx, ai: gemini }),
-    { name: "verify" });
+  // Gemini independently fact-checks — same op, selected per node via `ai`.
+  const faithful = wf.ai.bool(query, {
+    predicate: PRED_FAITHFUL,
+    model: GEMINI_MODEL,
+    name: "verify",
+    ai: gemini,
+  });
 
   return { wf, summary, faithful };
-}
-
-interface Args {
-  file?: string;
-  text?: string;
-}
-
-function parseArgs(argv: string[]): Args {
-  const out: Args = {};
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--file") out.file = argv[++i];
-    else if (argv[i] === "--text") out.text = argv[++i];
-  }
-  return out;
 }
 
 async function main() {
@@ -87,10 +76,13 @@ async function main() {
     process.exit(1);
   }
 
-  const { file, text } = parseArgs(process.argv.slice(2));
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: { file: { type: "string" }, text: { type: "string" } },
+  });
   let source: string;
-  if (file) source = readFileSync(file, "utf8");
-  else if (text) source = text;
+  if (values.file) source = readFileSync(values.file, "utf8");
+  else if (values.text) source = values.text;
   else source = SAMPLE; // built-in sample so the example runs with no args
 
   const gemini = new ai.GeminiClient({ model: GEMINI_MODEL });

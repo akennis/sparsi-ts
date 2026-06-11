@@ -19,6 +19,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 import { Workflow, ai, ops } from "../src";
 
 const RELEVANCE_CATEGORIES = ["technical", "business", "policy", "human_interest", "other"];
@@ -34,12 +35,6 @@ const LANE_OPS: Record<string, string> = {
   policy_brief:
     "summarize the following HackerNews story titles as a policy memo: " +
     "list legislative items, affected parties, and likely timeline",
-};
-
-const LANE_AI_LABEL: Record<string, string> = {
-  technical_brief: "AISummarizeOp(technical)",
-  business_brief: "AISummarizeOp(business)",
-  policy_brief: "AISummarizeOp(policy)",
 };
 
 /** Parses the HN Algolia response and returns non-empty hit titles. */
@@ -99,17 +94,19 @@ function build(query: string) {
     { name: "map_classify" },
   );
 
-  // Stage 3 — filter by relevance + flatten kept labels.
+  // Stage 3 — zip the three parallel maps back into correlated rows (no
+  // positional indexing, no casts, no length guard — Finding H), then filter by
+  // relevance and flatten the kept labels.
+  const rows = wf.zip([titles, relevantFlags, labelLists], { name: "zip_stories" });
   const filtered = wf.op(
-    { titles, relevantFlags, labelLists },
-    ({ titles, relevantFlags, labelLists }) => {
-      const n = Math.min(titles.length, relevantFlags.length, labelLists.length);
+    { rows },
+    ({ rows }) => {
       const keptTitles: string[] = [];
       const allLabels: string[] = [];
-      for (let i = 0; i < n; i++) {
-        if (!relevantFlags[i]) continue;
-        keptTitles.push(titles[i] as string);
-        allLabels.push(...(labelLists[i] as string[]));
+      for (const [title, relevant, labels] of rows) {
+        if (!relevant) continue;
+        keptTitles.push(title);
+        allLabels.push(...labels);
       }
       return { keptTitles, allLabels };
     },
@@ -122,42 +119,34 @@ function build(query: string) {
   });
 
   // Stage 5 — AI style selector.
-  const briefStyle = wf.op({ dominant }, ({ dominant }, ctx) =>
-    ai.modeSelect(dominant, { categories: STYLE_CATEGORIES }, ctx), { name: "mode_select" });
+  const briefStyle = wf.ai.modeSelect(dominant, { categories: STYLE_CATEGORIES, name: "mode_select" });
 
-  // Stage 6 — three brief-style lanes (exactly one fires).
+  // Stage 6 — three brief-style lanes (exactly one fires). The selected style
+  // rides `gate`, so each lane's predicate selects on it without it being wired
+  // into the AI input (which is just the kept titles) — no passthrough op.
   const keptTitles = wf.op({ filtered }, ({ filtered }) => filtered.keptTitles, {
     name: "kept_titles",
   });
   const lanes = STYLE_CATEGORIES.map((style) =>
-    wf.op({ keptTitles, briefStyle }, ({ keptTitles }, ctx) =>
-      ai.aiSummarize(keptTitles, { operation: LANE_OPS[style] as string }, ctx),
-      { name: style, condition: ({ briefStyle }) => briefStyle === style }),
+    wf.ai.summarize(keptTitles, {
+      operation: LANE_OPS[style] as string,
+      name: style,
+      gate: { briefStyle },
+      condition: (_in, { briefStyle }) => briefStyle === style,
+    }),
   );
 
   // Stage 7 — coalesce the one lane that fired.
-  const finalBrief = wf.coalesce(lanes, { name: "final_op" });
+  const finalBrief = wf.coalesce(lanes, { name: "final" });
 
-  return { wf, titles, filtered, dominant, briefStyle, finalBrief };
+  // The AI vertices, by reference — the driver reads which fired off each node's
+  // own `name`/skip status instead of a parallel label array (Finding E).
+  const aiVertices = [relevantFlags, labelLists, briefStyle, ...lanes];
+
+  return { wf, titles, filtered, dominant, briefStyle, finalBrief, aiVertices };
 }
 
 // ─── Driver ───────────────────────────────────────────────────────────────
-
-interface Args {
-  query?: string;
-  cache: boolean;
-  fixture?: string;
-}
-
-function parseArgs(argv: string[]): Args {
-  const out: Args = { cache: false };
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--query") out.query = argv[++i];
-    else if (argv[i] === "--cache") out.cache = true;
-    else if (argv[i] === "--fixture") out.fixture = argv[++i];
-  }
-  return out;
-}
 
 function queryToSlug(query: string): string {
   return query
@@ -184,14 +173,21 @@ async function main() {
     console.error("CLAUDE_API_KEY (or ANTHROPIC_API_KEY) is required");
     process.exit(1);
   }
-  const args = parseArgs(process.argv.slice(2));
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      query: { type: "string" },
+      cache: { type: "boolean" },
+      fixture: { type: "string" },
+    },
+  });
   // Default to the cached "golang" fixture so the example runs with no flags.
-  const query = args.query ?? "golang";
-  const useCache = args.cache || (!args.query && !args.fixture);
+  const query = values.query ?? "golang";
+  const useCache = Boolean(values.cache) || (!values.query && !values.fixture);
 
-  const responseJson = await fetchOrLoad(query, useCache, args.fixture);
+  const responseJson = await fetchOrLoad(query, useCache, values.fixture);
 
-  const { wf, titles, filtered, dominant, briefStyle, finalBrief } = build(query);
+  const { wf, titles, filtered, dominant, briefStyle, finalBrief, aiVertices } = build(query);
   const result = await wf.run({
     ai: new ai.AnthropicClient(),
     values: { response_json: responseJson },
@@ -200,7 +196,6 @@ async function main() {
 
   const allTitles = result.get(titles);
   const flat = result.get(filtered);
-  const style = result.get(briefStyle);
 
   const labelDistribution: Record<string, number> = {};
   for (const label of flat.allLabels) {
@@ -213,17 +208,9 @@ async function main() {
     kept_after_filter: flat.keptTitles.length,
     label_distribution: labelDistribution,
     dominant: result.get(dominant),
-    brief_style: style,
+    brief_style: result.get(briefStyle),
     brief: result.get(finalBrief),
-    ai_nodes: [
-      "ExtractTitlesOp",
-      "AIBoolOp(relevance/map)",
-      "AIClassifyMultiLabelOp(classify/map)",
-      "FilterAndFlattenOp",
-      "DominantCategoryOp",
-      "ModeSelectOp",
-      LANE_AI_LABEL[style],
-    ].filter(Boolean),
+    ai_nodes: aiVertices.filter((n) => !result.skipped(n)).map((n) => n.name),
   };
   console.log(JSON.stringify(out, null, 2));
 }

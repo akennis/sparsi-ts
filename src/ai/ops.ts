@@ -5,6 +5,12 @@ import { aiCompute, retryLoop, RetryError, goQuote } from "./compute";
 export interface AIOpOptions {
   maxRetries?: number;
   model?: string;
+  /**
+   * Label recorded on reasoning entries (and in the exhaustion error). One name
+   * for the operation: the `wf.ai.*` node constructors forward the node's name
+   * here, so a value is never named once for the node and once for the AI op.
+   */
+  name?: string;
 }
 
 const numbered = (items: string[]): string =>
@@ -33,7 +39,7 @@ export function modeSelect(
   return retryLoop(
     ctx,
     {
-      name: "modeSelect",
+      name: opts.name ?? "modeSelect",
       basePrompt,
       systemText,
       maxTokens: ctx.reasoning ? 512 : 64,
@@ -84,7 +90,7 @@ export function aiBool(
   return retryLoop(
     ctx,
     {
-      name: "aiBool",
+      name: opts.name ?? "aiBool",
       basePrompt,
       systemText,
       maxTokens: ctx.reasoning ? 256 : 8,
@@ -142,7 +148,7 @@ export function aiScore(
   return retryLoop(
     ctx,
     {
-      name: "aiScore",
+      name: opts.name ?? "aiScore",
       basePrompt,
       systemText,
       maxTokens: ctx.reasoning ? 256 : 16,
@@ -213,7 +219,7 @@ export function aiClassifyMultiLabel(
   return retryLoop(
     ctx,
     {
-      name: "aiClassifyMultiLabel",
+      name: opts.name ?? "aiClassifyMultiLabel",
       basePrompt,
       systemText,
       maxTokens: 256,
@@ -275,7 +281,7 @@ export function aiBestMatch(
   return retryLoop(
     ctx,
     {
-      name: "aiBestMatch",
+      name: opts.name ?? "aiBestMatch",
       basePrompt,
       systemText,
       maxTokens: ctx.reasoning ? 256 : 8,
@@ -338,7 +344,7 @@ export function aiRerank(
   return retryLoop(
     ctx,
     {
-      name: "aiRerank",
+      name: opts.name ?? "aiRerank",
       basePrompt,
       systemText,
       maxTokens: ctx.reasoning ? 512 : 64,
@@ -408,7 +414,7 @@ export function aiSummarize(
 ): Promise<string> {
   return aiCompute<string>(
     items,
-    { operation: opts.operation, output: "string", name: "aiSummarize", maxRetries: opts.maxRetries, model: opts.model },
+    { operation: opts.operation, output: "string", name: opts.name ?? "aiSummarize", maxRetries: opts.maxRetries, model: opts.model },
     ctx,
   );
 }
@@ -421,7 +427,7 @@ export function aiExtractStringSlice(
 ): Promise<string[]> {
   return aiCompute<string[]>(
     input,
-    { operation: opts.operation, output: "string[]", name: "aiExtractStringSlice", maxRetries: opts.maxRetries, model: opts.model },
+    { operation: opts.operation, output: "string[]", name: opts.name ?? "aiExtractStringSlice", maxRetries: opts.maxRetries, model: opts.model },
     ctx,
   );
 }
@@ -434,7 +440,7 @@ export function aiExtractMap(
 ): Promise<Record<string, string>> {
   return aiCompute<Record<string, string>>(
     input,
-    { operation: opts.operation, output: "map", name: "aiExtractMap", maxRetries: opts.maxRetries, model: opts.model },
+    { operation: opts.operation, output: "map", name: opts.name ?? "aiExtractMap", maxRetries: opts.maxRetries, model: opts.model },
     ctx,
   );
 }
@@ -450,7 +456,7 @@ export function aiParseNumber(
     {
       operation: opts?.operation ?? "extract the number from the text",
       output: "number",
-      name: "aiParseNumber",
+      name: opts?.name ?? "aiParseNumber",
       maxRetries: opts?.maxRetries,
       model: opts?.model,
     },

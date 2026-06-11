@@ -54,3 +54,12 @@ export {
   RetrieveWithFiltersOpDescription,
   ValidateCitationsOpDescription,
 } from "./descriptions";
+
+// Side-effect import: installs the `wf.rag` accessor on Workflow.prototype.
+import "./graph";
+export { RAGNamespace } from "./graph";
+export type {
+  RAGNodeOptions,
+  RAGRetrieveNodeOptions,
+  RAGRetrieveWithFiltersNodeOptions,
+} from "./graph";

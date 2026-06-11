@@ -1,5 +1,6 @@
 import { execute } from "./engine";
 import type {
+  AIClient,
   Node,
   NodeMap,
   OpFn,
@@ -8,21 +9,37 @@ import type {
   RunContext,
   RunOptions,
   RunResult,
+  Skip,
 } from "./types";
 
 /**
- * A predicate gating whether an op runs. Reads the op's own resolved inputs.
- * If it returns false the op is skipped (without running its function).
+ * A predicate gating whether an op runs. Reads the op's own resolved inputs and,
+ * separately, the resolved `gate` nodes declared in {@link OpDefOptions.gate}.
+ * If it returns false the op is skipped (without running its function). The gate
+ * nodes are *not* passed to the op's body, so callers stop wiring an extra input
+ * (and an identity passthrough) purely to make a value visible to the predicate.
  */
-export type Condition<D extends NodeMap> = (
+export type Condition<D extends NodeMap, G extends NodeMap = {}> = (
   inputs: Resolved<D>,
+  gate: Resolved<G>,
   ctx: RunContext,
 ) => boolean | Promise<boolean>;
 
 /** Options accepted by {@link Workflow.op}. */
-export interface OpDefOptions<D extends NodeMap> extends OpOptions {
-  condition?: Condition<D>;
+export interface OpDefOptions<D extends NodeMap, G extends NodeMap = {}>
+  extends OpOptions {
+  /**
+   * Extra nodes visible only to {@link condition}, never passed to the op's
+   * body. Like data inputs, a skipped gate node skips the op.
+   */
+  gate?: G;
+  condition?: Condition<D, G>;
 }
+
+/** Distributes over a tuple/array of nodes to the union of their value types. */
+type NodeValue<N> = N extends Node<infer T> ? T : never;
+/** The element type of an array-valued node. */
+type ElementOf<N> = N extends Node<readonly (infer E)[]> ? E : never;
 
 interface BaseDef {
   id: string;
@@ -43,11 +60,19 @@ export interface ConstNodeDef extends BaseDef {
 export interface OpNodeDef extends BaseDef {
   kind: "op";
   inputs: Record<string, string>;
+  /** Extra dependency ids visible only to `condition`, keyed by field name. */
+  gate?: Record<string, string>;
   fn: OpFn<any, any>;
-  condition?: Condition<any>;
+  condition?: Condition<any, any>;
+  /** Per-op AI client override; the engine swaps `ctx.ai` for this op. */
+  ai?: AIClient;
 }
 export interface CoalesceNodeDef extends BaseDef {
   kind: "coalesce";
+  sources: string[];
+}
+export interface ZipNodeDef extends BaseDef {
+  kind: "zip";
   sources: string[];
 }
 export interface MapNodeDef extends BaseDef {
@@ -72,6 +97,7 @@ export type AnyNodeDef =
   | ConstNodeDef
   | OpNodeDef
   | CoalesceNodeDef
+  | ZipNodeDef
   | MapNodeDef
   | FilterNodeDef
   | ReduceNodeDef;
@@ -80,8 +106,9 @@ export type AnyNodeDef =
 export function dependencies(def: AnyNodeDef): string[] {
   switch (def.kind) {
     case "op":
-      return Object.values(def.inputs);
+      return [...Object.values(def.inputs), ...Object.values(def.gate ?? {})];
     case "coalesce":
+    case "zip":
       return def.sources;
     case "map":
     case "filter":
@@ -148,21 +175,28 @@ export class Workflow {
    * An op: a typed async function over named input nodes. Skips automatically if
    * any input is skipped, or if its `condition` returns false.
    */
-  op<D extends NodeMap, O>(
+  op<D extends NodeMap, O, G extends NodeMap = {}>(
     inputs: D,
     fn: OpFn<D, O>,
-    opts?: OpDefOptions<D>,
+    opts?: OpDefOptions<D, G>,
   ): Node<O> {
     const id = this.nextId(opts?.name ?? "op");
     const inputIds: Record<string, string> = {};
     for (const [k, node] of Object.entries(inputs)) inputIds[k] = node.id;
+    let gateIds: Record<string, string> | undefined;
+    if (opts?.gate) {
+      gateIds = {};
+      for (const [k, node] of Object.entries(opts.gate)) gateIds[k] = node.id;
+    }
     const def: OpNodeDef = {
       kind: "op",
       id,
       name: opts?.name ?? "op",
       inputs: inputIds,
+      gate: gateIds,
       fn: fn as OpFn<any, any>,
-      condition: opts?.condition as Condition<any> | undefined,
+      condition: opts?.condition as Condition<any, any> | undefined,
+      ai: opts?.ai,
       onError: opts?.onError ?? "stop",
     };
     this.add(def);
@@ -170,10 +204,30 @@ export class Workflow {
   }
 
   /**
+   * A dependency-free producer: runs `fn` with only the run context and yields
+   * its value. The idiomatic spelling of "produces a value from nothing but
+   * `ctx`", without an empty input map or an unused, explicitly-typed parameter.
+   */
+  source<O>(
+    fn: (ctx: RunContext) => O | Skip | Promise<O | Skip>,
+    opts?: OpDefOptions<{}>,
+  ): Node<O> {
+    return this.op({}, (_inputs, ctx) => fn(ctx), opts);
+  }
+
+  /**
    * Picks the first non-skipped source's value. Skips only when *every* source
    * skipped. Use it to merge mutually exclusive conditional branches.
+   *
+   * The result type is the *union* of the branch value types, so branches with
+   * different shapes (e.g. a billing brief vs. a bug brief) no longer have to be
+   * flattened to a common type — `coalesce([a, b])` over `Node<A>` and `Node<B>`
+   * yields `Node<A | B>`.
    */
-  coalesce<T>(sources: Node<T>[], opts?: OpOptions): Node<T> {
+  coalesce<S extends readonly Node<any>[]>(
+    sources: S,
+    opts?: OpOptions,
+  ): Node<NodeValue<S[number]>> {
     const id = this.nextId(opts?.name ?? "coalesce");
     const def: CoalesceNodeDef = {
       kind: "coalesce",
@@ -183,7 +237,31 @@ export class Workflow {
       onError: opts?.onError ?? "stop",
     };
     this.add(def);
-    return this.handle<T>(id, def.name);
+    return this.handle<NodeValue<S[number]>>(id, def.name);
+  }
+
+  /**
+   * Combines several array nodes element-wise into one array of typed tuples,
+   * truncating to the shortest source. Keeps items correlated by position with
+   * their types intact, replacing index loops + `as` casts when several maps
+   * over one source must be recombined: `zip([titles, flags])` over
+   * `Node<string[]>` and `Node<boolean[]>` yields `Node<[string, boolean][]>`.
+   * Skips if any source skipped.
+   */
+  zip<S extends readonly Node<readonly unknown[]>[]>(
+    sources: [...S],
+    opts?: OpOptions,
+  ): Node<{ [K in keyof S]: ElementOf<S[K]> }[]> {
+    const id = this.nextId(opts?.name ?? "zip");
+    const def: ZipNodeDef = {
+      kind: "zip",
+      id,
+      name: opts?.name ?? "zip",
+      sources: sources.map((s) => s.id),
+      onError: opts?.onError ?? "stop",
+    };
+    this.add(def);
+    return this.handle<{ [K in keyof S]: ElementOf<S[K]> }[]>(id, def.name);
   }
 
   /** Maps `fn` over each element of an array node, producing an array node. */
