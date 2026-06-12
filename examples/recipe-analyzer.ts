@@ -21,7 +21,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { Workflow, ai, ops } from "../src";
 
-const MODEL = "gemini-3-flash-preview";
+const MODEL = "gemini-3.1-flash-lite";
 
 // Difficulty band thresholds.
 const EASY_MAX = 20.0;

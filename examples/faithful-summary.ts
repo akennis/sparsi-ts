@@ -25,7 +25,7 @@ import { parseArgs } from "node:util";
 import { Workflow, ai, type AIClient } from "../src";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
-const GEMINI_MODEL = "gemini-3-flash-preview";
+const GEMINI_MODEL = "gemini-3.1-flash-lite";
 
 const OP_SUMMARIZE =
   "summarize this article in 3–5 concise sentences; include only information explicitly stated in the text, do not add context or draw inferences";

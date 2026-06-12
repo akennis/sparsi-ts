@@ -26,54 +26,46 @@
  *     npm run example:remote-mcp                                  # default query
  *     npm run example:remote-mcp -- --query "How do I configure a Worker route?"
  */
-import { Workflow, mcp } from "../src";
+import { parseArgs } from "node:util";
+// Importing from `../src` (which re-exports `mcp`) installs the `wf.mcp.*`
+// node-constructor surface on Workflow.
+import { Workflow } from "../src";
 
 const CF_URL = "https://docs.mcp.cloudflare.com/mcp";
 const CF_TOOL = "search_cloudflare_documentation";
-
-/** The typed argument shape passed to the search tool (aligns with its schema). */
-interface SearchInput {
-  query: string;
-}
 
 function build() {
   const wf = new Workflow();
   const query = wf.input<string>("query");
 
-  const searchResults = wf.op({ query }, ({ query }, ctx) =>
-    mcp.mcpCall<SearchInput, string>(
-      { query },
-      {
-        transport: "http",
-        url: CF_URL,
-        tool: CF_TOOL,
-        output: "string",
-        initTimeoutMs: 30000,
-        callTimeoutMs: 60000,
-        maxRetries: 2,
-        // For a private server: headers: { Authorization: `Bearer ${process.env.TOKEN}` },
-      },
-      ctx,
-    ),
-    { name: "cf_search" });
+  // Node in, node out: the engine supplies `ctx`, setup/validation runs at build
+  // time, and `output: "string"` infers the node's value type (`Node<string>`).
+  // `formatArgs` shapes the scalar query node into the tool's argument record.
+  const searchResults = wf.mcp.call<string>(query, {
+    transport: "http",
+    url: CF_URL,
+    tool: CF_TOOL,
+    output: "string",
+    formatArgs: (query) => ({ query }),
+    initTimeoutMs: 30000,
+    callTimeoutMs: 60000,
+    maxRetries: 2,
+    name: "cf_search",
+    // For a private server: headers: { Authorization: `Bearer ${process.env.TOKEN}` },
+  });
 
   return { wf, searchResults };
 }
 
 // ─── Driver ─────────────────────────────────────────────────────────────────
 
-function parseQuery(argv: string[]): string | undefined {
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--query") return argv[++i];
-  }
-  return undefined;
-}
-
 async function main() {
-  const parsedQuery = parseQuery(process.argv.slice(2));
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: { query: { type: "string" } },
+  });
   // Default query so the example runs with no args.
-  const query =
-    parsedQuery?.trim() ? parsedQuery : "How do I configure a Worker route?";
+  const query = values.query?.trim() ? values.query : "How do I configure a Worker route?";
 
   const { wf, searchResults } = build();
   const result = await wf.run({ values: { query } });

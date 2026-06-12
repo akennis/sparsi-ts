@@ -13,7 +13,7 @@
 import { parseArgs } from "node:util";
 import { Workflow, ai, ops } from "../src";
 
-const MODEL = "gemini-3-flash-preview";
+const MODEL = "gemini-3.1-flash-lite";
 
 // Yahoo Finance endpoints.
 const QUOTE_PREFIX = "https://query2.finance.yahoo.com/v8/finance/chart/";

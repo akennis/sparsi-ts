@@ -35,14 +35,11 @@ import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { parseArgs } from "node:util";
 import { Workflow, mcp } from "../src";
 import type { MCPScriptCallback } from "../src/mcp";
 
-// ─── Search step: typed input/output ────────────────────────────────────────
-
-interface SearchInput {
-  query: string;
-}
+// ─── Search step ─────────────────────────────────────────────────────────────
 
 const googleSearchBoxTarget = `textarea[name="q"]`;
 
@@ -185,47 +182,14 @@ function decodeURLs(value: unknown): string[] | null {
   return null;
 }
 
-/** Reads the first complete JSON array/object value out of `s`, or undefined. */
-function decodeFirstJSONValue(s: string): unknown {
-  const start = s.search(/[[{]/);
-  if (start < 0) return undefined;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < s.length; i++) {
-    const ch = s[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === "\\") esc = true;
-      else if (ch === '"') inStr = false;
-      continue;
-    }
-    if (ch === '"') inStr = true;
-    else if (ch === "[" || ch === "{") depth++;
-    else if (ch === "]" || ch === "}") {
-      depth--;
-      if (depth === 0) {
-        try {
-          return JSON.parse(s.slice(start, i + 1));
-        } catch {
-          return undefined;
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
 /**
- * Accepts the structured-content payload and/or the text fallback from
- * browser_evaluate and returns the contained `string[]`, or null. playwright-mcp
- * wraps the text payload with a "### Result" header before the JSON array, so we
- * strip that framing if present and then scan for the first '[' or '{'.
+ * Returns the `string[]` carried by a browser_evaluate result, or null. The
+ * already-decoded structured payload is the primary route; the text fallback only
+ * fires when structured content is absent. playwright-mcp frames the text payload
+ * with a "### Result" header before the JSON, so we strip that and parse what
+ * remains.
  */
-function parseURLList(
-  structured: unknown,
-  text: string,
-): string[] | null {
+function parseURLList(structured: unknown, text: string): string[] | null {
   if (structured !== undefined) {
     const arr = decodeURLs(structured);
     if (arr) return arr;
@@ -233,12 +197,11 @@ function parseURLList(
   let t = text;
   const i = t.indexOf("### Result");
   if (i >= 0) t = t.slice(i + "### Result".length);
-  const decoded = decodeFirstJSONValue(t);
-  if (decoded !== undefined) {
-    const arr = decodeURLs(decoded);
-    if (arr) return arr;
+  try {
+    return decodeURLs(JSON.parse(t.trim()));
+  } catch {
+    return null;
   }
-  return null;
 }
 
 // ─── MCP scripts ────────────────────────────────────────────────────────────
@@ -260,8 +223,8 @@ const PLAYWRIGHT_OPTS = {
 };
 
 /** Google → search → extract first 3 URLs over one playwright-mcp session. */
-const googleSearchURLs: MCPScriptCallback<SearchInput, string[]> = async (sess, input) => {
-  if (!input || input.query === "") {
+const googleSearchURLs: MCPScriptCallback<string, string[]> = async (sess, input) => {
+  if (!input || input === "") {
     throw new Error("googleSearchURLs: empty query");
   }
   try {
@@ -291,7 +254,7 @@ const googleSearchURLs: MCPScriptCallback<SearchInput, string[]> = async (sess, 
   try {
     await sess.callTool("browser_type", {
       target: googleSearchBoxTarget,
-      text: input.query,
+      text: input,
       submit: true,
     });
   } catch (err) {
@@ -358,24 +321,25 @@ function build(outDir: string) {
   const wf = new Workflow();
   const query = wf.input<string>("query");
 
-  // Stage 1 — Google → first 3 URLs over one playwright-mcp session.
-  const resultUrls = wf.op({ query }, ({ query }, ctx) =>
-    mcp.mcpScript<SearchInput, string[]>(
-      { query },
-      { ...PLAYWRIGHT_OPTS, script: googleSearchURLs },
-      ctx,
-    ),
-    { name: "find_results" });
+  // Stage 1 — Google → first 3 URLs over one playwright-mcp session. The node
+  // constructor takes the query node directly, supplies `ctx`, and runs setup
+  // (validate + prewarm) at build time.
+  const resultUrls = wf.mcp.script<string, string[]>(query, {
+    ...PLAYWRIGHT_OPTS,
+    script: googleSearchURLs,
+    name: "find_results",
+  });
 
-  // Stage 2 — per-URL screenshot fan-out (one pooled subprocess each).
+  // Stage 2 — per-URL screenshot fan-out (one pooled subprocess each). This is a
+  // map fan-out (mcpScript per URL), which the single-node-in/single-node-out
+  // `wf.mcp.script` constructor can't express — so it calls the free `mcpScript`.
+  // We run setup here ourselves so the stdio pool still prewarms, matching the
+  // guarantee the constructor gives stage 1.
+  const screenshotOpts = { ...PLAYWRIGHT_OPTS, poolSize: 8, script: makeScreenshotScript(outDir) };
+  mcp.setupMCPScript(screenshotOpts);
   const shotResults = wf.map(
     resultUrls,
-    (url, ctx) =>
-      mcp.mcpScript<string, ShotResult>(
-        url,
-        { ...PLAYWRIGHT_OPTS, poolSize: 8, script: makeScreenshotScript(outDir) },
-        ctx,
-      ),
+    (url, ctx) => mcp.mcpScript<string, ShotResult>(url, screenshotOpts, ctx),
     { name: "shoot_each" },
   );
 
@@ -383,20 +347,6 @@ function build(outDir: string) {
 }
 
 // ─── Driver ─────────────────────────────────────────────────────────────────
-
-interface Args {
-  query: string;
-  outDir?: string;
-}
-
-function parseArgs(argv: string[]): Args {
-  const out: Args = { query: "Shizuoka" };
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--query") out.query = argv[++i] ?? out.query;
-    else if (argv[i] === "--out-dir") out.outDir = argv[++i];
-  }
-  return out;
-}
 
 /** Applies the default (<cwd>/.playwright-mcp), enforces an absolute path, creates it. */
 function resolveOutDir(flagVal: string | undefined): string {
@@ -422,14 +372,18 @@ interface ShotErr {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const outDir = resolveOutDir(args.outDir);
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: { query: { type: "string" }, "out-dir": { type: "string" } },
+  });
+  const query = values.query ?? "Shizuoka";
+  const outDir = resolveOutDir(values["out-dir"]);
 
   const { wf, shotResults } = build(outDir);
   let results: ShotResult[];
   try {
     const result = await wf.run({
-      values: { query: args.query },
+      values: { query },
       concurrency: 8,
     });
     results = result.get(shotResults);
@@ -465,7 +419,7 @@ async function main() {
   }
 
   const out = {
-    query: args.query,
+    query,
     out_dir: outDir,
     screenshots,
     ...(errors.length > 0 ? { errors } : {}),

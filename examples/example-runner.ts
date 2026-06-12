@@ -4,43 +4,51 @@
  * Discovers every *other* runnable example in this directory, runs each one as a
  * child `tsx` process, and confirms it exits 0. For any example that fails
  * (non-zero exit, crash, or timeout) it routes the captured stdout/stderr through
- * an AI op (`ai.aiSummarize`) to produce a short root-cause diagnosis.
+ * the `wf.ai.summarize` node constructor to produce a short root-cause diagnosis.
  *
- * The DAG has two nodes per example:
- *   run:<name>      — a source op (no deps) that spawns `tsx <example>`, capturing
- *                     { ok, exitCode, stdout, stderr, timedOut }. It never throws —
- *                     a failing example is data, not an error.
- *   diagnose:<name> — gated on `condition: !run.ok`, so it only fires for failures.
- *                     It feeds the captured output to ai.aiSummarize (Claude) and
- *                     returns a 1–2 sentence root cause. `onError: "continue"` means
- *                     an AI hiccup skips just that diagnosis, never the whole run.
+ * The DAG has three nodes per example:
+ *   run:<name>      — a `wf.source` op (no deps) that spawns `tsx <example>`,
+ *                     capturing { ok, exitCode, stdout, stderr, timedOut }. It never
+ *                     throws — a failing example is data, not an error.
+ *   dump:<name>     — gated on `condition: !run.ok`; builds the failure dump fed to
+ *                     the diagnosis. Skips for passing examples, so its skip
+ *                     propagates to diagnose (a green run costs zero AI calls).
+ *   diagnose:<name> — `wf.ai.summarize(dump, …)`: a first-class AI node (the engine
+ *                     supplies ctx) returning a 1–2 sentence root cause.
+ *                     `onError: "continue"` means an AI hiccup skips just that
+ *                     diagnosis, never the whole run.
  *
- * Passing examples skip their diagnose node entirely, so a green run costs zero AI
- * calls. Each example is an independent two-node chain (run → diagnose) with no
- * edges between examples, so the engine runs them in parallel up to --concurrency.
- * The final report is assembled in the driver from the resolved nodes (reading the
- * possibly-skipped diagnose node via result.getOr).
+ * Passing examples skip their dump+diagnose nodes entirely, so a green run costs
+ * zero AI calls. Each example is an independent chain (run → dump → diagnose) with
+ * no edges between examples, so the engine runs them in parallel up to
+ * --concurrency. The final report is assembled in the driver from the resolved
+ * nodes, reading the possibly-skipped diagnose node via result.getOr.
  *
  *                          discover()  →  [ N runnable examples ]
  *                                             fan-out (no cross-example edges)
  *      ┌───────────────────────────────┬───────────────────────────────┐
  *      │   ┌─────────────────────┐     │   ┌─────────────────────┐     │
  *      │   │ run:<example>       │     │   │ run:<example>       │     │  … ×N
- *      │   │ (source op, 0 deps) │     │   │ (source op, 0 deps) │     │
+ *      │   │ (wf.source, 0 deps) │     │   │ (wf.source, 0 deps) │     │
  *      │   │ spawn tsx <file>    │     │   │ spawn tsx <file>    │     │
  *      │   └──────────┬──────────┘     │   └──────────┬──────────┘     │
  *      │              ▼ run            │              ▼ run            │
  *      │   ┌─────────────────────┐     │   ┌─────────────────────┐     │
- *      │   │ diagnose:<example>  │     │   │ diagnose:<example>  │     │
+ *      │   │ dump:<example>      │     │   │ dump:<example>      │     │
  *      │   │ condition: !run.ok  │     │   │ condition: !run.ok  │     │
+ *      │   └──────────┬──────────┘     │   └──────────┬──────────┘     │
+ *      │              ▼ dump           │              ▼ dump           │
+ *      │   ┌─────────────────────┐     │   ┌─────────────────────┐     │
+ *      │   │ diagnose:<example>  │     │   │ diagnose:<example>  │     │
+ *      │   │ wf.ai.summarize(…)  │     │   │ wf.ai.summarize(…)  │     │
  *      │   │ onError: "continue" │     │   │ onError: "continue" │     │
- *      │   │ ai.aiSummarize(…)   │     │   │ ai.aiSummarize(…)   │     │
  *      │   └─────────────────────┘     │   └─────────────────────┘     │
  *      │   run.ok ⇒ SKIP (no AI)       │   run failed ⇒ AI diagnosis   │
  *      └───────────────────────────────┴───────────────────────────────┘
  *
  * AI is optional: with CLAUDE_API_KEY (or ANTHROPIC_API_KEY) set, failures get an
- * AI diagnosis; without it, the diagnose op falls back to a raw output tail.
+ * AI diagnosis; without it (or on an AI error) the diagnose node skips and the
+ * driver falls back to a raw output tail via result.getOr.
  *
  * This file excludes itself from discovery, so it never tries to run itself.
  *
@@ -58,6 +66,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
+import { parseArgs } from "node:util";
 import { Workflow, ai } from "../src";
 import type { RunContext, Node } from "../src";
 
@@ -164,51 +173,65 @@ interface DiagInput {
   run: Outcome;
 }
 
+const TRIAGE_PROMPT =
+  "You are triaging a failed Node/TypeScript example program. In 1–2 sentences, " +
+  "state the root cause of the failure. If it is a missing environment variable, " +
+  "API key, or network/credential issue, name the specific variable or resource.";
+
+/** One-line human reason an example failed (timeout / crash / non-zero exit). */
+function reasonFor(o: Outcome, timeoutMs: number): string {
+  return o.timedOut
+    ? `timed out after ${timeoutMs} ms`
+    : o.exitCode === null
+      ? `did not start / was killed (signal ${o.signal ?? "?"})`
+      : `exited with code ${o.exitCode}`;
+}
+
+/** The full failure dump fed to the AI diagnosis op. */
+function buildDump(ex: Example, o: Outcome, timeoutMs: number): string {
+  return (
+    `Example "${ex.name}" ${reasonFor(o, timeoutMs)}.\n` +
+    `--- STDERR (tail) ---\n${tail(o.stderr) || "(empty)"}\n` +
+    `--- STDOUT (tail) ---\n${tail(o.stdout) || "(empty)"}`
+  );
+}
+
+/**
+ * Driver-side fallback when the AI diagnosis is unavailable — no AI client, or
+ * the diagnose node skipped on an AI error. Gives the raw output tail rather than
+ * an empty diagnosis.
+ */
+function rawTailFallback(o: Outcome, timeoutMs: number): string {
+  return `${reasonFor(o, timeoutMs)}. (no AI diagnosis; raw tail)\n${tail(o.stderr || o.stdout, 600)}`;
+}
+
 function build(examples: Example[], timeoutMs: number) {
   const wf = new Workflow();
   const nodes: { ex: Example; run: Node<Outcome>; diagnose: Node<string> }[] = [];
 
   for (const ex of examples) {
     // Source op (no deps): run the example.
-    const run = wf.op({}, (_in: Record<string, never>, ctx: RunContext) =>
-      runExample(ex, ctx.signal, timeoutMs), { name: `run:${ex.name}` });
-
-    // Failure lane: only fires when the example did not exit 0.
-    const diagnose = wf.op(
-      { run },
-      async ({ run }: DiagInput, ctx: RunContext): Promise<string> => {
-        const reason = run.timedOut
-          ? `timed out after ${timeoutMs} ms`
-          : run.exitCode === null
-            ? `did not start / was killed (signal ${run.signal ?? "?"})`
-            : `exited with code ${run.exitCode}`;
-        const dump =
-          `Example "${ex.name}" ${reason}.\n` +
-          `--- STDERR (tail) ---\n${tail(run.stderr) || "(empty)"}\n` +
-          `--- STDOUT (tail) ---\n${tail(run.stdout) || "(empty)"}`;
-
-        // No AI client → fall back to a raw tail rather than failing the run.
-        if (!ctx.ai) {
-          return `${reason}. (no AI client; raw tail)\n${tail(run.stderr || run.stdout, 600)}`;
-        }
-        return ai.aiSummarize(
-          [dump],
-          {
-            operation:
-              "You are triaging a failed Node/TypeScript example program. In 1–2 sentences, " +
-              "state the root cause of the failure. If it is a missing environment variable, " +
-              "API key, or network/credential issue, name the specific variable or resource.",
-          },
-          ctx,
-        );
-      },
-      {
-        name: `diagnose:${ex.name}`,
-        condition: ({ run }: DiagInput) => !run.ok,
-        // An AI error here must not abort the whole run — just skip this diagnosis.
-        onError: "continue",
-      },
+    const run = wf.source(
+      (ctx: RunContext) => runExample(ex, ctx.signal, timeoutMs),
+      { name: `run:${ex.name}` },
     );
+
+    // Failure lane. The dump node builds the diagnosis input only for examples
+    // that didn't exit 0 (condition: !run.ok); its skip propagates to the AI node,
+    // so a green run costs zero AI calls.
+    const dump = wf.op(
+      { run },
+      ({ run }: DiagInput): string[] => [buildDump(ex, run, timeoutMs)],
+      { name: `dump:${ex.name}`, condition: ({ run }: DiagInput) => !run.ok },
+    );
+
+    // AI root-cause as a first-class node. onError "continue" skips just this
+    // diagnosis on an AI hiccup; the driver then falls back to a raw tail via getOr.
+    const diagnose = wf.ai.summarize(dump, {
+      operation: TRIAGE_PROMPT,
+      name: `diagnose:${ex.name}`,
+      onError: "continue",
+    });
 
     nodes.push({ ex, run, diagnose });
   }
@@ -224,15 +247,20 @@ interface Args {
   only?: string;
 }
 
-function parseArgs(argv: string[]): Args {
-  const out: Args = { timeoutMs: 90_000, concurrency: 4 };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--timeout") out.timeoutMs = Number(argv[++i]) * 1000;
-    else if (a === "--concurrency") out.concurrency = Number(argv[++i]);
-    else if (a === "--only") out.only = argv[++i];
-  }
-  return out;
+function parseRunnerArgs(argv: string[]): Args {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      timeout: { type: "string" },
+      concurrency: { type: "string" },
+      only: { type: "string" },
+    },
+  });
+  return {
+    timeoutMs: values.timeout ? Number(values.timeout) * 1000 : 90_000,
+    concurrency: values.concurrency ? Number(values.concurrency) : 4,
+    only: values.only,
+  };
 }
 
 const GREEN = "\x1b[32m";
@@ -241,7 +269,7 @@ const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseRunnerArgs(process.argv.slice(2));
 
   let examples = discover();
   if (args.only) examples = examples.filter((e) => e.name.includes(args.only!));
@@ -276,7 +304,8 @@ async function main() {
       lines.push(`${GREEN}✔ PASS${RESET}  ${ex.name}  ${DIM}(${dur})${RESET}`);
     } else {
       failed++;
-      const why = result.getOr(diagnose, "(no diagnosis)");
+      // diagnose SKIPs without an AI client or on an AI error; fall back to a raw tail.
+      const why = result.getOr(diagnose, rawTailFallback(o, args.timeoutMs));
       const status = o.timedOut ? "TIMEOUT" : o.exitCode === null ? "CRASH" : `exit ${o.exitCode}`;
       lines.push(`${RED}✗ FAIL${RESET}  ${ex.name}  ${DIM}(${status}, ${dur})${RESET}\n        ↳ ${why}`);
     }
