@@ -118,16 +118,20 @@ test("aiBool reasoning mode accepts a real JSON boolean (F1)", async () => {
   assert.equal(value, true);
 });
 
-test("aiScore reasoning mode defaults a missing score to 0", async () => {
-  // An absent score is accepted as 0.0 rather than treated as a parse failure.
-  const mock = new ai.MockAIClient(['{"reasoning":"forgot the score"}']);
+test("aiScore reasoning mode retries on a missing score", async () => {
+  // An absent score is a retry (matching the non-reasoning branch), not a
+  // silent 0.0 — the model gets another turn to supply the field.
+  const mock = new ai.MockAIClient([
+    '{"reasoning":"forgot the score"}',
+    '{"score":0.42,"reasoning":"here it is"}',
+  ]);
   const { value } = await runOp(
     mock,
     (ctx) => ai.aiScore("text", { criterion: "relevance" }, ctx),
     { reasoning: true },
   );
-  assert.equal(value, 0);
-  assert.equal(mock.calls.length, 1);
+  assert.equal(value, 0.42);
+  assert.equal(mock.calls.length, 2);
 });
 
 test("modeSelect retries until a valid category", async () => {

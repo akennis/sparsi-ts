@@ -72,28 +72,28 @@ export const packMathOperands = (a: number, b: number): MathOperands => ({ A: a,
 // ── Math ─────────────────────────────────────────────────────────────────────
 
 export const AddOpDescription =
-  "AddOp: deterministic numeric addition. Inputs: A *number, B *number. Output: Result number.";
+  "AddOp: deterministic numeric addition. Inputs: A number, B number. Output: Result number.";
 export const SubOpDescription =
-  "SubOp: A minus B. Inputs: A *number, B *number. Output: Result number.";
+  "SubOp: A minus B. Inputs: A number, B number. Output: Result number.";
 export const MulOpDescription =
-  "MulOp: A multiplied by B. Inputs: A *number, B *number. Output: Result number.";
+  "MulOp: A multiplied by B. Inputs: A number, B number. Output: Result number.";
 export const DivOpDescription =
-  "DivOp: A divided by B. Inputs: A *number, B *number. Output: Result number. Error if B==0.";
+  "DivOp: A divided by B. Inputs: A number, B number. Output: Result number. Error if B==0.";
 export const PowOpDescription =
-  "PowOp: A raised to the power B. Inputs: A *number, B *number. Output: Result number.";
+  "PowOp: A raised to the power B. Inputs: A number, B number. Output: Result number.";
 export const ModOpDescription =
-  "ModOp: remainder of A/B (sign of the dividend). Inputs: A *number, B *number. Output: Result number. Error if B==0.";
+  "ModOp: remainder of A/B (sign of the dividend). Inputs: A number, B number. Output: Result number. Error if B==0.";
 export const RoundOpDescription =
-  "RoundOp: rounds Value to the nearest integer (half away from zero). Input: Value *number. Output: Result number.";
+  "RoundOp: rounds Value to the nearest integer (half away from zero). Input: Value number. Output: Result number.";
 export const ClampOpDescription =
-  "ClampOp: clamps Value to [Min, Max]. Inputs: Value *number, Min *number, Max *number. Output: Result number.";
+  "ClampOp: clamps Value to [Min, Max]. Inputs: Value number, Min number, Max number. Output: Result number.";
 export const TruncOpDescription =
-  "TruncOp: truncates Value toward zero to an integral number. Input: Value *number. Output: Result number.";
+  "TruncOp: truncates Value toward zero to an integral number. Input: Value number. Output: Result number.";
 export const SumOpDescription =
-  "SumOp: sums all values in a numeric slice. Input: Values *[]number. Output: Result number.";
+  "SumOp: sums all values in a numeric slice. Input: Values number[]. Output: Result number.";
 export const MinOpDescription =
-  "MinOp: returns the minimum value in a numeric slice. Input: Values *[]number. Output: Result number. Error if empty.";
+  "MinOp: returns the minimum value in a numeric slice. Input: Values number[]. Output: Result number. Error if empty.";
 export const MaxOpDescription =
-  "MaxOp: returns the maximum value in a numeric slice. Input: Values *[]number. Output: Result number. Error if empty.";
+  "MaxOp: returns the maximum value in a numeric slice. Input: Values number[]. Output: Result number. Error if empty.";
 export const PackMathOperandsOpDescription =
-  "PackMathOperandsOp: packs two numeric inputs into a MathOperands struct. Inputs: A *number, B *number. Output: Result MathOperands.";
+  "PackMathOperandsOp: packs two numeric inputs into a MathOperands struct. Inputs: A number, B number. Output: Result MathOperands.";

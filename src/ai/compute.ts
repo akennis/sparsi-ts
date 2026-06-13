@@ -144,14 +144,6 @@ function describeValue(v: unknown): string {
  * wrappers actually feed. Any other value falls back to {@link describeValue}'s
  * field-preserving layout. A caller-supplied `format` overrides all of this.
  */
-/**
- * Quotes a string for diagnostic messages the way a double-quoted source
- * literal would: surrounding quotes plus escaped control and quote characters.
- * Used wherever a prior model response is echoed back into an error or retry
- * prompt so embedded newlines/quotes don't corrupt it.
- */
-export const goQuote = (s: string): string => JSON.stringify(s);
-
 function describeInput(input: unknown, format?: (v: unknown) => string): string {
   if (format) return format(input);
   if (typeof input === "string") return input;
@@ -258,7 +250,7 @@ export async function aiCompute<Out>(
       try {
         envelope = JSON.parse(raw);
       } catch (e) {
-        envelopeFailed(`expected JSON {result, reasoning}, got ${goQuote(raw)}: ${(e as Error).message}`);
+        envelopeFailed(`expected JSON {result, reasoning}, got ${JSON.stringify(raw)}: ${(e as Error).message}`);
         continue;
       }
       // `result` is kept as raw JSON text: a JSON string is taken verbatim;

@@ -21,7 +21,8 @@ export type {
 export { Workflow } from "./workflow";
 export type { Condition, OpDefOptions } from "./workflow";
 
-export { Pool } from "./pool";
+export { setWarn } from "./internal/warn";
+export type { WarnFn } from "./internal/warn";
 
 export * as ops from "./ops";
 export * as ai from "./ai";

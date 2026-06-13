@@ -259,6 +259,11 @@ async function main(): Promise<void> {
   }
 }
 
+// Unlike the other examples (which call `main().catch(...)` unconditionally),
+// this entry is guarded: rag-gemini-embed.test.ts imports `GeminiVectorRetriever`
+// and `cosineSimilarity` from this module, and the guard keeps that import from
+// running the CLI driver. The package is CommonJS, so `require.main === module`
+// is the right idiom here.
 if (require.main === module) {
   main().catch((err) => {
     console.error("workflow:", err instanceof Error ? err.message : err);

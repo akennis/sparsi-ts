@@ -7,7 +7,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Workflow, Pool, SKIP } from "../src";
+import { Workflow, SKIP } from "../src";
+import { Pool } from "../src/pool";
 import type { Node } from "../src";
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

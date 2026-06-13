@@ -5,11 +5,11 @@
  */
 
 export const BoolNotOpDescription =
-  "BoolNotOp: logical NOT. Input: Value *bool. Output: Result bool.";
+  "BoolNotOp: logical NOT. Input: Value boolean. Output: Result boolean.";
 export const BoolAndOpDescription =
-  "BoolAndOp: logical AND. Inputs: A *bool, B *bool. Output: Result bool.";
+  "BoolAndOp: logical AND. Inputs: A boolean, B boolean. Output: Result boolean.";
 export const BoolOrOpDescription =
-  "BoolOrOp: logical OR. Inputs: A *bool, B *bool. Output: Result bool.";
+  "BoolOrOp: logical OR. Inputs: A boolean, B boolean. Output: Result boolean.";
 
 export const boolNot = (value: boolean): boolean => !value;
 export const boolAnd = (a: boolean, b: boolean): boolean => a && b;

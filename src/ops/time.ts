@@ -14,7 +14,7 @@ export const sleep = (ms: number): Promise<void> =>
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CityTimeOpDescription = `CityTimeOp: returns the current time for a supported city.
-  Input:  City *string — must be "New York" or "Tokyo"; any other value is a graph execution error.
+  Input:  City string — must be "New York" or "Tokyo"; any other value is a graph execution error.
   Output: Result string — current local time formatted as RFC3339.`;
 
 const cityTimezones: Record<string, string> = {

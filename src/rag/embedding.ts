@@ -17,8 +17,8 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { withDeadline } from "./timeout";
-
-const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+import { errMsg } from "../internal/error";
+import { warn } from "../internal/warn";
 
 /**
  * The framework-owned shape user Retrievers consume. Implementations call
@@ -169,7 +169,7 @@ export class EnvEmbeddingClientFactory implements EmbeddingClientFactory {
       // ref; later same-ref calls hit the cache and skip this branch. Skip the
       // empty ref — that's the documented "use env defaults" path.
       if (ref !== "") {
-        console.warn(
+        warn(
           `EnvEmbeddingClientFactory: ref="${ref}" is ignored — bundled factory uses GEMINI_API_KEY env var only. ` +
             `Register a custom factory via registerEmbeddingClientFactory for per-ref credential routing.`,
         );

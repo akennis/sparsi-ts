@@ -18,8 +18,8 @@ import {
   type RetrievalContext,
 } from "./retriever";
 import { withDeadline } from "./timeout";
-
-const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+import { errMsg } from "../internal/error";
+import { warn } from "../internal/warn";
 
 /** Common options for {@link retrieve} / {@link retrieveWithFilters}. */
 export interface RetrieveOptions {
@@ -174,8 +174,8 @@ export function retrieveWithFilters(
 
   let filters: RetrievalFilters | undefined;
   if (Object.keys(merged).length === 0) {
-    console.warn(
-      "WARNING: RetrieveWithFiltersOp has no filters (Filters wire empty/disconnected and static_filters unset); retrieving without filters. If this is intentional, use RetrieveOp instead.",
+    warn(
+      "RetrieveWithFiltersOp has no filters (Filters wire empty/disconnected and static_filters unset); retrieving without filters. If this is intentional, use RetrieveOp instead.",
     );
   } else {
     filters = new RetrievalFilters(merged);

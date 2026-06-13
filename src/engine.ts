@@ -329,7 +329,8 @@ export async function execute(
       return r as T;
     },
     skipped(node: Node<unknown>): boolean {
-      return isSkip(resultMap.get(node.id));
+      const r = resultMap.get(node.id);
+      return r === undefined || isSkip(r);
     },
     nodes(): NodeStatus[] {
       return nodeStatuses();

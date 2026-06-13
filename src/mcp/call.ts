@@ -15,7 +15,9 @@ import { parseResult, type OutputKind } from "../ai/compute";
 import { acquireMCPSession, prewarmMCPPool } from "./pool";
 import { resolveMCPConfig, type MCPConnectionOptions, type MCPResolvedConfig } from "./transport";
 import type { MCPCallOutcome } from "./client";
-import { abortError, errMsg, sleepOrAbort } from "./util";
+import { errMsg } from "../internal/error";
+import { warn } from "../internal/warn";
+import { abortError, sleepOrAbort } from "./util";
 
 /** Description for the catalog (`## MCP` section). */
 export const MCPCallOpDescription = `MCPCallOp: invoke a single MCP server tool as a DAG step.
@@ -39,8 +41,8 @@ session down — unless poolSize > 0 opts into the warm-replenish pool (stdio on
                               Pair with shutdownMCPPool at process exit so pre-started
                               subprocesses drain.
             poolPrewarm     — when poolSize > 0, fill the pool during setup (default true).
-            output          — built-in result dispatch: "string" (default), "number", "bool",
-                              "string[]", "number[]", or "json" (decodes structured content,
+            output          — built-in result dispatch: "string" (default), "number", "boolean",
+                              "string[]", "number[]", "map", or "json" (decodes structured content,
                               preferred, or parses the text as JSON).
             formatArgs      — hook to marshal the input into the tool's "arguments" object.
             parseResponse   — hook for full control of parsing (receives text + structured).
@@ -181,7 +183,7 @@ async function runOnce<In, Out>(
     try {
       await sess.close();
     } catch (e) {
-      console.warn(`MCPCallOp.close_warn: ${errMsg(e)}`);
+      warn(`MCPCallOp.close_warn: ${errMsg(e)}`);
     }
   }
 }
@@ -219,8 +221,8 @@ export async function mcpCall<In, Out>(
       outcome = await runOnce(cfg, tool, args, signal);
     } catch (err) {
       lastErr = err;
-      console.warn(
-        `MCPCallOp.attempt_failed (attempt ${attempt + 1} of ${cfg.maxRetries}): ${errMsg(err)}`,
+      warn(
+        `MCPCallOp.attempt_failed (attempt ${attempt + 1} of ${cfg.maxRetries + 1}): ${errMsg(err)}`,
       );
       continue;
     }

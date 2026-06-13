@@ -19,6 +19,7 @@ import type { AIClient, Node, NodeMap, RunContext } from "../types";
 import { withAI } from "../context";
 import { withRetry, type RetryConfig } from "./client";
 import { aiCompute, type AIComputeResult, type OutputKind } from "./compute";
+import { withRepair, type WithRepairConfig } from "./repair";
 import {
   modeSelect,
   aiBool,
@@ -73,6 +74,23 @@ export interface AINodeOptions {
 export interface AIGateOptions<D extends NodeMap, G extends NodeMap = {}> {
   gate?: G;
   condition?: Condition<D, G>;
+}
+
+/**
+ * Options for {@link AINamespace.repair}: the full {@link WithRepairConfig}
+ * (`run`/`codec`/`maxAttempts`/`model`/`maxTokens`/`promptPrefix`/`promptSuffix`/
+ * `name`) plus the node-level wiring shared by the namespace (`ai`/`onError`/
+ * `retry`) and the optional S1.3 gate.
+ */
+export interface AIRepairNodeOptions<T, O, G extends NodeMap = {}>
+  extends WithRepairConfig<T, O>,
+    AIGateOptions<{ input: Node<T> }, G> {
+  /** AI client this op runs under, overriding `RunOptions.ai` for this op only. */
+  ai?: AIClient;
+  /** What to do when the op throws. Default `"stop"`. */
+  onError?: "stop" | "continue";
+  /** Retry transient provider errors for the repair LLM call (see {@link AINodeOptions.retry}). */
+  retry?: boolean | RetryConfig;
 }
 
 /** Options for {@link AINamespace.compute}; the result type follows `output`. */
@@ -280,6 +298,24 @@ export class AINamespace {
           ctx,
         )),
       this.wiring<{ input: Node<unknown> }, G>(opts, "compute"),
+    );
+  }
+
+  /**
+   * AI-driven recovery wrapper around a deterministic op. Runs `cfg.run(input)`;
+   * when it throws {@link ErrRepairable}, repairs the input via the LLM (using
+   * `cfg.codec`) and re-runs, up to `cfg.maxAttempts` cycles. A first-class node
+   * version of {@link withRepair} — no hand-wrapping in `wf.op`, no couriering
+   * `ctx`, the single input declared once.
+   */
+  repair<T, O, G extends NodeMap = {}>(
+    input: Node<T>,
+    cfg: AIRepairNodeOptions<T, O, G>,
+  ): Node<O> {
+    return this.wf.op(
+      { input },
+      this.retrying(cfg, ({ input }, ctx) => withRepair<T, O>(input, cfg, ctx)),
+      this.wiring<{ input: Node<T> }, G>(cfg, "withRepair"),
     );
   }
 }

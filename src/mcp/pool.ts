@@ -18,7 +18,9 @@ import {
   type MCPSession,
 } from "./client";
 import { type MCPTransportSpec } from "./transport";
-import { errMsg, sleepOrAbort } from "./util";
+import { errMsg } from "../internal/error";
+import { warn } from "../internal/warn";
+import { sleepOrAbort } from "./util";
 
 /** Warm-session state for one canonical pool key. */
 interface MCPPoolEntry {
@@ -100,7 +102,7 @@ class MCPPool {
       try {
         sess = await createMCPSession(e.spec, e.initTimeoutMs, this.aborter.signal);
       } catch (err) {
-        console.warn(
+        warn(
           `mcp pool replenish failed (transport=${e.spec.kind} target=${
             e.spec.kind === "http" ? e.spec.url : e.spec.command
           }): ${errMsg(err)}`,

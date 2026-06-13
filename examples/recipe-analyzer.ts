@@ -208,8 +208,9 @@ async function main() {
     }
   }
 
-  // Which AI vertices actually fired — read straight off the nodes' own names
-  // (the engine already knows skip status; no parallel label array; see Finding E).
+  // The AI-node subset we report on (names come from each node's own `name`, not
+  // a parallel label array). It's needed to *restrict* the fired-node report to
+  // AI nodes — `RunResult.firedNodes()` would also include the non-AI plumbing.
   const aiVertices = [ingredients, steps, cookMinutes, lanes.easy, lanes.medium, lanes.hard];
   const aiNodes = aiVertices.filter((n) => !result.skipped(n)).map((n) => n.name);
 

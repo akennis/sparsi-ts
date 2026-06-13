@@ -7,6 +7,7 @@ import type {
   AIClient,
   RunContext,
 } from "../types";
+import { warn } from "../internal/warn";
 
 /** Throws a descriptive error if no AI client was provided to the run. */
 export function requireAI(ctx: RunContext): AIClient {
@@ -74,7 +75,7 @@ export class GeminiClient implements AIClient {
   private readonly sdk: GoogleGenAI;
 
   constructor(opts: GeminiClientOptions = {}) {
-    this.defaultModel = opts.model ?? "gemini-2.5-flash";
+    this.defaultModel = opts.model ?? "gemini-3.1-flash-lite";
     if (opts.sdk) {
       this.sdk = opts.sdk;
       return;
@@ -113,7 +114,7 @@ export class GeminiClient implements AIClient {
     }
     const text = res.text ?? "";
     if (text === "" && (res.candidates?.length ?? 0) > 0) {
-      console.warn(`gemini.empty: finish_reason=${res.candidates?.[0]?.finishReason ?? ""}`);
+      warn(`gemini.empty: finish_reason=${res.candidates?.[0]?.finishReason ?? ""}`);
     }
     return { text, model, raw: res };
   }
@@ -123,8 +124,13 @@ export class GeminiClient implements AIClient {
 export function isTransientError(err: unknown): boolean {
   const msg = String(err instanceof Error ? err.message : err).toLowerCase();
   return [
+    // 5xx server-error family + 429 rate-limit status codes.
+    "500",
+    "502",
     "503",
+    "504",
     "429",
+    // Provider phrasings ("unavailable" subsumes "service unavailable").
     "too many requests",
     "rate limit",
     "rate_limit",
@@ -132,7 +138,6 @@ export function isTransientError(err: unknown): boolean {
     "unavailable",
     "high demand",
     "try again",
-    "service unavailable",
   ].some((p) => msg.includes(p));
 }
 
@@ -206,7 +211,8 @@ export class MockAIClient implements AIClient {
     }
   }
 
-  async call(req: AICallRequest): Promise<AICallResponse> {
+  async call(req: AICallRequest, signal?: AbortSignal): Promise<AICallResponse> {
+    if (signal?.aborted) throw signal.reason ?? new Error("aborted");
     this.calls.push(req);
     const out = this.handler(req, this.calls.length - 1);
     return typeof out === "string" ? { text: out } : out;

@@ -26,11 +26,11 @@ export function coalesceVal<T>(...vals: (T | null | undefined)[]): T | undefined
 // ── Select (ternary) ─────────────────────────────────────────────────────────
 
 export const SelectStringOpDescription =
-  "SelectStringOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond *bool, IfTrue *string, IfFalse *string. Output: Result string.";
+  "SelectStringOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond boolean, IfTrue string, IfFalse string. Output: Result string.";
 export const SelectNumberOpDescription =
-  "SelectNumberOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond *bool, IfTrue *number, IfFalse *number. Output: Result number.";
+  "SelectNumberOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond boolean, IfTrue number, IfFalse number. Output: Result number.";
 export const SelectBoolOpDescription =
-  "SelectBoolOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond *bool, IfTrue *bool, IfFalse *bool. Output: Result bool.";
+  "SelectBoolOp: ternary; returns IfTrue when Cond is true, otherwise IfFalse. Inputs: Cond boolean, IfTrue boolean, IfFalse boolean. Output: Result boolean.";
 
 export const selectString = (cond: boolean, ifTrue: string, ifFalse: string): string =>
   cond ? ifTrue : ifFalse;
@@ -44,7 +44,7 @@ export const selectBool = (cond: boolean, ifTrue: boolean, ifFalse: boolean): bo
 export const SwitchStringOpDescription = `SwitchStringOp: looks up Key in a params-configured cases map; returns the configured default on miss.
   Params: cases — JSON-encoded key→value pairs (e.g. {"red":"stop","green":"go"}).
           default — string returned when Key is nil or not in cases (default "").
-  Input:  Key *string.
+  Input:  Key string.
   Output: Result string.`;
 
 /** Looks up `key` in `cases`; returns `defValue` when key is nil (F16). */
@@ -60,9 +60,9 @@ export function switchString(
 // ── Default ──────────────────────────────────────────────────────────────────
 
 export const DefaultStringOpDescription =
-  "DefaultStringOp: returns Default when Value is nil or the empty string; otherwise returns Value. Inputs: Value *string, Default *string. Output: Result string.";
+  "DefaultStringOp: returns Default when Value is nil or the empty string; otherwise returns Value. Inputs: Value string, Default string. Output: Result string.";
 export const DefaultNumberOpDescription =
-  "DefaultNumberOp: returns Default when Value is nil; zero is treated as a valid value. Inputs: Value *number, Default *number. Output: Result number.";
+  "DefaultNumberOp: returns Default when Value is nil; zero is treated as a valid value. Inputs: Value number, Default number. Output: Result number.";
 
 /** Returns `def` when `value` is nil or empty; otherwise `value` (F16). */
 export const defaultString = (value: string | null | undefined, def: string): string =>

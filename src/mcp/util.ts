@@ -30,11 +30,6 @@ export function sleepOrAbort(
   });
 }
 
-/** Extracts a message from an unknown thrown value. */
-export function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 /** Builds the error to throw when a run is aborted. */
 export function abortError(signal?: AbortSignal): Error {
   const reason = signal?.reason;

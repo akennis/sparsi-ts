@@ -13,7 +13,9 @@ export function chunk<T>(xs: T[], size: number): T[][] {
   return out;
 }
 
-export function zip<A, B>(as: A[], bs: B[]): [A, B][] {
+// Named `zip2` to avoid colliding with `Workflow.zip` (the headline graph-level
+// API that combines array *nodes*); this is a plain 2-array positional helper.
+export function zip2<A, B>(as: A[], bs: B[]): [A, B][] {
   const n = Math.min(as.length, bs.length);
   const out: [A, B][] = [];
   for (let i = 0; i < n; i++) out.push([as[i]!, bs[i]!]);
@@ -31,21 +33,21 @@ export const range = (n: number): number[] =>
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SliceLenOpDescription =
-  "SliceLenOp: returns the length of a string slice. Input: Input *[]string. Output: Result int.";
+  "SliceLenOp: returns the length of a string slice. Input: Input string[]. Output: Result number.";
 export const SliceAtOpDescription =
-  "SliceAtOp: returns the element at a given index. Param: index (int, used when Index wire is absent). Inputs: Input *[]string, Index *int (optional wire). Output: Result string.";
+  "SliceAtOp: returns the element at a given index. Param: index (number, used when Index wire is absent). Inputs: Input string[], Index number (optional wire). Output: Result string.";
 export const SliceFirstOpDescription =
-  "SliceFirstOp: returns the first element. Input: Input *[]string. Output: Result string. Error if empty.";
+  "SliceFirstOp: returns the first element. Input: Input string[]. Output: Result string. Error if empty.";
 export const SliceLastOpDescription =
-  "SliceLastOp: returns the last element. Input: Input *[]string. Output: Result string. Error if empty.";
+  "SliceLastOp: returns the last element. Input: Input string[]. Output: Result string. Error if empty.";
 export const SliceContainsOpDescription =
-  "SliceContainsOp: reports whether a slice contains a value. Inputs: Input *[]string, Value *string. Output: Match bool.";
+  "SliceContainsOp: reports whether a slice contains a value. Inputs: Input string[], Value string. Output: Match boolean.";
 export const SliceJoinOpDescription =
-  `SliceJoinOp: joins a string slice with a separator. Param: sep (default ","). Input: Input *[]string. Output: Result string.`;
+  `SliceJoinOp: joins a string slice with a separator. Param: sep (default ","). Input: Input string[]. Output: Result string.`;
 export const SliceFilterEqOpDescription =
-  "SliceFilterEqOp: returns elements equal to Value. Inputs: Input *[]string, Value *string. Output: Result []string.";
+  "SliceFilterEqOp: returns elements equal to Value. Inputs: Input string[], Value string. Output: Result string[].";
 export const SliceTopKOpDescription =
-  "SliceTopKOp: returns indices of the K highest scores in descending order. Param: k (int). Input: Scores *[]float64. Output: Result []int.";
+  "SliceTopKOp: returns indices of the K highest scores in descending order. Param: k (number). Input: Scores number[]. Output: Result number[].";
 
 export const sliceLen = <T>(input: T[]): number => input.length;
 

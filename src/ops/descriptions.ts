@@ -141,7 +141,7 @@ export const descriptionGroups: DescriptionGroup[] = [
     descs: [
       ai.ModeSelectOpDescription,
       ai.AIComputeStringToStringOpDescription,
-      ai.AIComputeMathOperandsToFloat64OpDescription,
+      ai.AIComputeMathOperandsToNumberOpDescription,
       ai.AIExtractStringSliceOpDescription,
       ai.AIExtractMapOpDescription,
       ai.AIParseNumberOpDescription,

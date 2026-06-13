@@ -30,18 +30,18 @@ export function template(tpl: string, vars: Record<string, unknown>): string {
 
 export const StringLookupOpDescription = `StringLookupOp: looks up Key in a hardcoded string→string map; returns "" on miss.
   Params: map — JSON-encoded key→value pairs (e.g. {"hamburger":"ketchup","hotdog":"mustard"}).
-  Input:  Key *string.
+  Input:  Key string.
   Output: Result string (empty string if key not found).`;
 export const StringToLowerOpDescription =
-  "StringToLowerOp: converts a string to lowercase. Input: Value *string. Output: Result string.";
+  "StringToLowerOp: converts a string to lowercase. Input: Value string. Output: Result string.";
 export const StringConcatOpDescription =
-  "StringConcatOp: concatenates two strings. Inputs: A *string, B *string. Output: Result string.";
+  "StringConcatOp: concatenates two strings. Inputs: A string, B string. Output: Result string.";
 export const StringSplitOpDescription =
-  `StringSplitOp: splits a string by a separator. Param: sep (default ","). Input: Input *string. Output: Result []string.`;
+  `StringSplitOp: splits a string by a separator. Param: sep (default ","). Input: Input string. Output: Result string[].`;
 export const RegexMatchOpDescription =
-  `RegexMatchOp: reports whether the input matches a compiled regex. Param: pattern (required). Input: Input *string. Output: Match bool.`;
+  `RegexMatchOp: reports whether the input matches a compiled regex. Param: pattern (required). Input: Input string. Output: Match boolean.`;
 export const RegexExtractOpDescription =
-  `RegexExtractOp: returns the first match (or submatch group 1 if present) of a regex. Param: pattern (required). Input: Input *string. Output: Result string (empty if no match).`;
+  `RegexExtractOp: returns the first match (or submatch group 1 if present) of a regex. Param: pattern (required). Input: Input string. Output: Result string (empty if no match).`;
 
 /** Looks up `key` in `entries`; returns "" on miss (mirrors a nil/missing key). */
 export function stringLookup(
@@ -56,6 +56,8 @@ export function stringLookup(
 export const stringToLower = (value: string | null | undefined): string =>
   value == null ? "" : value.toLowerCase();
 
+// `stringConcat` is the two-arg StringConcatOp catalog op; `concat` (above) is the
+// variadic compose helper used inside op bodies. Both intentionally coexist.
 export const stringConcat = (a: string, b: string): string => a + b;
 
 /** Splits by `sep` (default ","), trims each part, and drops empties. */
@@ -75,7 +77,7 @@ export function stringSplit(input: string, sep = ","): string[] {
  * backreferences and lookaround and is not guaranteed linear-time; size or
  * sanitize untrusted patterns accordingly.
  */
-function compilePattern(opName: string, pattern: string): RegExp {
+export function compilePattern(opName: string, pattern: string): RegExp {
   if (pattern === "") throw new Error(`${opName}: pattern param is required`);
   try {
     return new RegExp(pattern);
@@ -103,9 +105,9 @@ export function regexExtract(pattern: string, input: string): string {
 // separate int/float casts), formatting via native String().
 
 export const NumberToStringOpDescription =
-  "NumberToStringOp: formats a number as a string (native JS String). Input: Value *number. Output: Result string.";
+  "NumberToStringOp: formats a number as a string (native JS String). Input: Value number. Output: Result string.";
 export const BoolToStringOpDescription =
-  'BoolToStringOp: formats a bool as string ("true" or "false"). Input: Value *bool. Output: Result string.';
+  'BoolToStringOp: formats a bool as string ("true" or "false"). Input: Value boolean. Output: Result string.';
 export const ToStringOpDescription =
   "ToStringOp: formats any upstream value as a string. Input: Value (any). Output: Result string.";
 

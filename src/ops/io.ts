@@ -16,7 +16,6 @@ export const writeFile = (path: string, content: string): Promise<void> =>
 export const env = (name: string): string | undefined => process.env[name];
 
 export function print(...args: unknown[]): void {
-  // eslint-disable-next-line no-console
   console.log(...args);
 }
 
@@ -37,11 +36,11 @@ export function readStdin(): Promise<string> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const FileReadOpDescription =
-  "FileReadOp: reads a file from disk. Input: Path *string. Output: Content string.";
+  "FileReadOp: reads a file from disk. Input: Path string. Output: Content string.";
 export const EnvOpDescription =
-  "EnvOp: reads an environment variable. Input: Name *string. Output: Value string (empty if unset).";
+  "EnvOp: reads an environment variable. Input: Name string. Output: Value string (empty if unset).";
 export const HTTPGetOpDescription =
-  "HTTPGetOp: performs an HTTP GET request. Input: URL *string. Outputs: Body string, StatusCode int.";
+  "HTTPGetOp: performs an HTTP GET request. Input: URL string. Outputs: Body string, StatusCode number.";
 
 /** User-Agent string HTTPGetOp sends. */
 const HTTP_GET_USER_AGENT =

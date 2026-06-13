@@ -28,7 +28,7 @@ export type { OutputKind, AIComputeOptions, AIComputeResult } from "./compute";
 // Side-effect import: installs the `wf.ai` accessor on Workflow.prototype.
 import "./graph";
 export { AINamespace } from "./graph";
-export type { AINodeOptions, AIComputeNodeOptions } from "./graph";
+export type { AINodeOptions, AIComputeNodeOptions, AIRepairNodeOptions } from "./graph";
 
 export { withRepair, WithRepairDescription, textCodec, jsonCodec, xmlCodec } from "./repair";
 export type { WithRepairConfig, RepairCodec, XMLCodecSpec } from "./repair";
@@ -50,7 +50,7 @@ export type { AIOpOptions } from "./ops";
 export {
   ModeSelectOpDescription,
   AIComputeStringToStringOpDescription,
-  AIComputeMathOperandsToFloat64OpDescription,
+  AIComputeMathOperandsToNumberOpDescription,
   AIExtractStringSliceOpDescription,
   AIExtractMapOpDescription,
   AIParseNumberOpDescription,

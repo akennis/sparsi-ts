@@ -15,6 +15,7 @@
  */
 
 import type { AIClient } from "../types";
+import { warn } from "../internal/warn";
 import {
   AnthropicClient,
   GeminiClient,
@@ -74,7 +75,7 @@ export class EnvAIClientFactory implements AIClientFactory {
     // later calls for the same ref hit the cache and skip this branch. Skip the
     // empty ref — that's the documented "use env defaults" path.
     if (ref !== "") {
-      console.warn(
+      warn(
         `EnvAIClientFactory: ref="${ref}" is ignored — bundled factory uses ${envVar} env var only. ` +
           `Register a custom factory via registerAIClientFactory for per-ref credential routing.`,
       );

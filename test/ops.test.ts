@@ -35,7 +35,7 @@ test("select helpers", () => {
 test("slice helpers", () => {
   assert.deepEqual(ops.slice.unique([1, 1, 2, 3, 3]), [1, 2, 3]);
   assert.deepEqual(ops.slice.chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
-  assert.deepEqual(ops.slice.zip([1, 2, 3], ["a", "b"]), [[1, "a"], [2, "b"]]);
+  assert.deepEqual(ops.slice.zip2([1, 2, 3], ["a", "b"]), [[1, "a"], [2, "b"]]);
   assert.deepEqual(ops.slice.range(3), [0, 1, 2]);
 });
 

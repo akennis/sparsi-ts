@@ -15,6 +15,7 @@
  * {@link xmlCodec}.
  */
 
+import { XMLBuilder, XMLParser } from "fast-xml-parser";
 import type { RunContext } from "../types";
 import { requireAI } from "./client";
 import { ErrRepairable } from "./compute";
@@ -23,8 +24,8 @@ export const WithRepairDescription = `WithRepair: AI-driven recovery wrapper aro
   Mechanism: When the wrapped op throws ErrRepairable, the wrapper forwards the
              error's prompt verbatim (sandwiched by a configured
              promptPrefix/promptSuffix) to the LLM, parses the response into a
-             fresh input value via the configured parse callback, and re-runs the
-             inner op with that value. Up to maxAttempts repair cycles per run;
+             fresh input value via the configured RepairCodec's decode, and re-runs
+             the inner op with that value. Up to maxAttempts repair cycles per run;
              non-repairable errors are propagated unchanged.
   Inner contract:
              - The inner op throws ErrRepairable when the failure is structural
@@ -105,38 +106,13 @@ export interface XMLCodecSpec {
   optional?: readonly string[];
 }
 
-/** Escapes element text so a value cannot break out of its element. */
-function escapeXmlText(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;")
-    .replace(/\t/g, "&#x9;")
-    .replace(/\n/g, "&#xA;")
-    .replace(/\r/g, "&#xD;");
-}
-
-/** Reverses {@link escapeXmlText}, tolerating either decimal/hex or named refs. */
-function xmlUnescape(s: string): string {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;|&#34;/g, '"')
-    .replace(/&apos;|&#39;/g, "'")
-    .replace(/&#x9;/g, "\t")
-    .replace(/&#xA;/g, "\n")
-    .replace(/&#xD;/g, "\r")
-    .replace(/&amp;/g, "&");
-}
-
 /**
- * A codec for a flat record of string fields rendered as a shallow XML element.
+ * A codec for a flat record of string fields rendered as a shallow XML element,
+ * backed by `fast-xml-parser` (no hand-rolled escaping/parsing).
  * {@link RepairCodec.encode} emits `<root>\n  <field>escaped</field>...\n</root>`,
  * omitting optional fields whose value is empty; {@link RepairCodec.decode} strips
- * fences and extracts each field by tag (unescaping and trimming), omitting
- * optional fields that are absent. Decode throws when the root element is missing.
+ * fences and parses the element, omitting optional fields that are absent. Decode
+ * throws when the root element is missing.
  *
  * The caller supplies the value type `T` (e.g. a domain interface of string
  * fields); the field/value mapping is treated internally as `Record<string,
@@ -144,27 +120,34 @@ function xmlUnescape(s: string): string {
  */
 export function xmlCodec<T = Record<string, string>>(spec: XMLCodecSpec): RepairCodec<T> {
   const optional = new Set(spec.optional ?? []);
+  const builder = new XMLBuilder({ format: true, indentBy: "  ", suppressEmptyNode: false });
+  // parseTagValue:false keeps every field a string, so a numeric-looking
+  // <id>123</id> round-trips as "123" rather than the number 123; trimValues
+  // mirrors the prior trim-on-extract behaviour.
+  const parser = new XMLParser({ parseTagValue: false, trimValues: true });
   return {
     encode: (value) => {
       const rec = value as unknown as Record<string, string>;
-      let xml = `<${spec.root}>\n`;
+      const fields: Record<string, string> = {};
       for (const f of spec.fields) {
         const v = rec[f] ?? "";
         if (optional.has(f) && v.trim() === "") continue;
-        xml += `  <${f}>${escapeXmlText(v)}</${f}>\n`;
+        fields[f] = v;
       }
-      xml += `</${spec.root}>`;
-      return xml;
+      return (builder.build({ [spec.root]: fields }) as string).trim();
     },
     decode: (response) => {
       const cleaned = stripFences(response);
-      if (!new RegExp(`<${spec.root}[\\s>]`).test(cleaned)) {
+      const parsed = parser.parse(cleaned) as Record<string, unknown>;
+      const rootVal = parsed[spec.root];
+      if (rootVal === undefined) {
         throw new Error(`xml: no <${spec.root}> element in response`);
       }
+      const rec = (rootVal ?? {}) as Record<string, unknown>;
       const out: Record<string, string> = {};
       for (const f of spec.fields) {
-        const m = new RegExp(`<${f}>([\\s\\S]*?)</${f}>`).exec(cleaned);
-        const val = m ? xmlUnescape((m[1] ?? "").trim()) : "";
+        const raw = rec[f];
+        const val = raw === undefined || raw === null ? "" : String(raw);
         if (optional.has(f) && val === "") continue;
         out[f] = val;
       }
@@ -228,7 +211,16 @@ export async function withRepair<T, O>(
   // Initial run. Success short-circuits with no LLM call.
   let rep: ErrRepairable;
   try {
-    return await cfg.run(input, ctx);
+    const out = await cfg.run(input, ctx);
+    // Emit a reasoning record on the happy path too, so the trace is uniform
+    // whether or not a repair cycle was needed.
+    ctx.logger?.log({
+      node: tag,
+      reasoning: "no repair needed",
+      result: out,
+      inputs: { name, max_attempts: maxAttempts },
+    });
+    return out;
   } catch (err) {
     if (!(err instanceof ErrRepairable)) throw err; // non-repairable propagates unchanged
     rep = err;

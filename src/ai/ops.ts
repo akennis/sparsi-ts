@@ -1,5 +1,5 @@
 import type { RunContext } from "../types";
-import { aiCompute, retryLoop, RetryError, goQuote } from "./compute";
+import { aiCompute, retryLoop, RetryError } from "./compute";
 
 /** Options common to every AI op. */
 export interface AIOpOptions {
@@ -55,7 +55,7 @@ export function modeSelect(
         try {
           env = JSON.parse(raw);
         } catch (e) {
-          const detail = `expected JSON {result, reasoning}, got ${goQuote(raw)}: ${(e as Error).message}`;
+          const detail = `expected JSON {result, reasoning}, got ${JSON.stringify(raw)}: ${(e as Error).message}`;
           throw new RetryError(`Previous response was invalid JSON — ${detail}.`, detail);
         }
         result = String(env.result ?? "").trim();
@@ -65,8 +65,8 @@ export function modeSelect(
       }
       if (!catSet.has(result)) {
         throw new RetryError(
-          `Previous result ${goQuote(result)} was invalid — must be exactly one of: ${catList}.`,
-          `result ${goQuote(result)} is not one of ${cats.join(", ")}`,
+          `Previous result ${JSON.stringify(result)} was invalid — must be exactly one of: ${catList}.`,
+          `result ${JSON.stringify(result)} is not one of ${cats.join(", ")}`,
         );
       }
       return { value: result, reasoning };
@@ -106,7 +106,7 @@ export function aiBool(
         } catch (e) {
           throw new RetryError(
             'Previous response was not valid JSON. Respond with only: {"result": <true|false>, "reasoning": "<string>"}.',
-            `expected JSON {result, reasoning}, got ${goQuote(raw)}: ${(e as Error).message}`,
+            `expected JSON {result, reasoning}, got ${JSON.stringify(raw)}: ${(e as Error).message}`,
           );
         }
         if (typeof env.result !== "boolean") {
@@ -124,8 +124,8 @@ export function aiBool(
           return { value: false };
         default:
           throw new RetryError(
-            `Previous response ${goQuote(raw)} was invalid. Respond with only 'true' or 'false'.`,
-            `expected true or false, got ${goQuote(raw)}`,
+            `Previous response ${JSON.stringify(raw)} was invalid. Respond with only 'true' or 'false'.`,
+            `expected true or false, got ${JSON.stringify(raw)}`,
           );
       }
     },
@@ -166,25 +166,37 @@ export function aiScore(
         } catch (e) {
           throw new RetryError(
             'Previous response was not valid JSON. Respond with only: {"score": <float>, "reasoning": "<string>"}.',
-            `expected JSON {score, reasoning}, got "${raw}": ${(e as Error).message}`,
+            `expected JSON {score, reasoning}, got ${JSON.stringify(raw)}: ${(e as Error).message}`,
           );
         }
-        // A missing score defaults to 0 (an in-range value), not a parse failure.
-        // A present but non-numeric score is still a retry.
-        score = env.score === undefined || env.score === null ? 0 : Number(env.score);
         reasoning = env.reasoning;
-        if (Number.isNaN(score) || score < 0 || score > 1) {
+        // Treat a missing or non-numeric score as a retry, matching the
+        // non-reasoning branch — neither mode should silently invent a 0.
+        if (env.score === undefined || env.score === null) {
           throw new RetryError(
-            `Previous score ${env.score} was out of range. The score field must be between 0.0 and 1.0.`,
-            `score ${env.score} out of [0,1]`,
+            'Previous response omitted the score field. Respond with only: {"score": <float 0.0–1.0>, "reasoning": "<string>"}.',
+            "missing score field",
+          );
+        }
+        score = Number(env.score);
+        if (Number.isNaN(score)) {
+          throw new RetryError(
+            `Previous score ${JSON.stringify(env.score)} was not a valid number. The score field must be a decimal between 0.0 and 1.0.`,
+            `expected number, got ${JSON.stringify(env.score)}`,
+          );
+        }
+        if (score < 0 || score > 1) {
+          throw new RetryError(
+            `Previous score ${score} was out of range. The score field must be between 0.0 and 1.0.`,
+            `score ${score} out of [0,1]`,
           );
         }
       } else {
         score = Number(raw);
         if (raw === "" || Number.isNaN(score)) {
           throw new RetryError(
-            `Previous response "${raw}" was not a valid number. Respond with only a decimal number between 0.0 and 1.0.`,
-            `expected number, got "${raw}"`,
+            `Previous response ${JSON.stringify(raw)} was not a valid number. Respond with only a decimal number between 0.0 and 1.0.`,
+            `expected number, got ${JSON.stringify(raw)}`,
           );
         }
         if (score < 0 || score > 1) {
@@ -237,7 +249,7 @@ export function aiClassifyMultiLabel(
         } catch (e) {
           throw new RetryError(
             'Previous response was not valid JSON. Respond with only: {"labels": "<CSV>", "reasoning": "<string>"}.',
-            `expected JSON {labels, reasoning}, got "${raw}": ${(e as Error).message}`,
+            `expected JSON {labels, reasoning}, got ${JSON.stringify(raw)}: ${(e as Error).message}`,
           );
         }
         labelsCSV = env.labels ?? "";
@@ -299,7 +311,7 @@ export function aiBestMatch(
         } catch (e) {
           throw new RetryError(
             'Previous response was not valid JSON. Respond with only: {"index": <integer>, "reasoning": "<string>"}.',
-            `expected JSON {index, reasoning}, got "${raw}": ${(e as Error).message}`,
+            `expected JSON {index, reasoning}, got ${JSON.stringify(raw)}: ${(e as Error).message}`,
           );
         }
         idx = Number(env.index);
@@ -308,8 +320,8 @@ export function aiBestMatch(
         idx = Number(raw);
         if (raw === "" || !Number.isInteger(idx)) {
           throw new RetryError(
-            `Previous response "${raw}" was not a valid integer. Respond with only the integer index.`,
-            `expected integer index, got "${raw}"`,
+            `Previous response ${JSON.stringify(raw)} was not a valid integer. Respond with only the integer index.`,
+            `expected integer index, got ${JSON.stringify(raw)}`,
           );
         }
       }
@@ -362,7 +374,7 @@ export function aiRerank(
         } catch (e) {
           throw new RetryError(
             'Previous response was not valid JSON. Respond with only: {"indices": "<CSV>", "reasoning": "<string>"}.',
-            `expected JSON {indices, reasoning}, got "${raw}": ${(e as Error).message}`,
+            `expected JSON {indices, reasoning}, got ${JSON.stringify(raw)}: ${(e as Error).message}`,
           );
         }
         indicesCSV = env.indices ?? "";
@@ -375,8 +387,8 @@ export function aiRerank(
         const v = Number(p);
         if (!Number.isInteger(v)) {
           throw new RetryError(
-            `Previous response "${raw}" was invalid: expected integer, got "${p}". Respond with comma-separated integers only.`,
-            `expected integer, got "${p}"`,
+            `Previous response ${JSON.stringify(raw)} was invalid: expected integer, got ${JSON.stringify(p)}. Respond with comma-separated integers only.`,
+            `expected integer, got ${JSON.stringify(p)}`,
           );
         }
         indices.push(v);
@@ -448,17 +460,17 @@ export function aiExtractMap(
 /** Converts free-form text to a number. */
 export function aiParseNumber(
   input: string,
-  opts: (AIOpOptions & { operation?: string }) | undefined,
+  opts: AIOpOptions & { operation?: string } = {},
   ctx: RunContext,
 ): Promise<number> {
   return aiCompute<number>(
     input,
     {
-      operation: opts?.operation ?? "extract the number from the text",
+      operation: opts.operation ?? "extract the number from the text",
       output: "number",
-      name: opts?.name ?? "aiParseNumber",
-      maxRetries: opts?.maxRetries,
-      model: opts?.model,
+      name: opts.name ?? "aiParseNumber",
+      maxRetries: opts.maxRetries,
+      model: opts.model,
     },
     ctx,
   );

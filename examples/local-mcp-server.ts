@@ -32,8 +32,7 @@
  *     npm run example:local-mcp -- --query "Shizuoka" --out-dir C:\shots
  */
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { statSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
 import { Workflow, mcp } from "../src";
@@ -142,9 +141,6 @@ interface ShotResult {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-/** Quotes a string for diagnostic messages. */
-const q = (s: string): string => JSON.stringify(s);
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + "…";
@@ -278,11 +274,11 @@ const googleSearchURLs: MCPScriptCallback<string, string[]> = async (sess, input
   const urls = parseURLList(outcome.structured, outcome.text);
   if (urls === null) {
     throw new Error(
-      `parse URL list (text=${q(truncate(outcome.text, 200))}): could not decode URL list from structured or text payload`,
+      `parse URL list (text=${JSON.stringify(truncate(outcome.text, 200))}): could not decode URL list from structured or text payload`,
     );
   }
   if (urls.length === 0) {
-    throw new Error(`browser_evaluate returned no URLs (text=${q(truncate(outcome.text, 200))})`);
+    throw new Error(`browser_evaluate returned no URLs (text=${JSON.stringify(truncate(outcome.text, 200))})`);
   }
   return urls;
 };

@@ -127,8 +127,10 @@ function build() {
     { name: "final_concat" },
   );
 
-  // The AI vertices, in firing order — reported by their own node names rather
-  // than a parallel Go-style label array (Finding E).
+  // The AI-node subset we report on, in firing order (names come from each node's
+  // own `name`, not a parallel label array). It's needed to *restrict* the
+  // fired-node report to AI nodes — `RunResult.firedNodes()` would also include
+  // the non-AI plumbing.
   const aiVertices = [tempC, precipMM, windKph, conditions, outfitAdvice, unusual];
   return { wf, tempC, precipMM, windKph, band, wet, windy, conditions, finalAdvice, aiVertices };
 }

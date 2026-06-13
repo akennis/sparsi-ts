@@ -139,8 +139,10 @@ function build(query: string) {
   // Stage 7 — coalesce the one lane that fired.
   const finalBrief = wf.coalesce(lanes, { name: "final" });
 
-  // The AI vertices, by reference — the driver reads which fired off each node's
-  // own `name`/skip status instead of a parallel label array (Finding E).
+  // The AI-node subset the driver reports on (names come from each node's own
+  // `name`/skip status, not a parallel label array). It's needed to *restrict*
+  // the fired-node report to AI nodes — `RunResult.firedNodes()` would also
+  // include the non-AI plumbing.
   const aiVertices = [relevantFlags, labelLists, briefStyle, ...lanes];
 
   return { wf, titles, filtered, dominant, briefStyle, finalBrief, aiVertices };

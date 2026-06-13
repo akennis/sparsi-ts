@@ -8,7 +8,7 @@ export const stringify = (v: unknown, pretty = false): string =>
 /**
  * CONVENIENCE dotted-path reader over an already-parsed value, returning the raw
  * value (or undefined). The catalog op is {@link jsonExtract}, which parses a JSON
- * *string* and returns a JSON-encoded leaf. Use `get` for in-memory traversal,
+ * string* and returns a JSON-encoded leaf. Use `get` for in-memory traversal,
  * `jsonExtract` for the op semantics.
  */
 export function get<T = unknown>(obj: unknown, path: string): T | undefined {
@@ -31,20 +31,17 @@ export const merge = <A extends object, B extends object>(a: A, b: B): A & B => 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const JSONExtractOpDescription =
-  `JSONExtractOp: extracts a value from a JSON string using a dot-separated path. Numeric path segments index into arrays (e.g. "meals.0.name"). Inputs: JSON *string, Path *string. Output: Value string (JSON-encoded leaf, or "" if not found).`;
+  `JSONExtractOp: extracts a value from a JSON string using a dot-separated path. Numeric path segments index into arrays (e.g. "meals.0.name"). Inputs: JSON string, Path string. Output: Value string (JSON-encoded leaf, or "" if not found).`;
 
 /** Message wrapped when a required path can't be traversed. */
 export const ErrRequiredPathMissing = "required path missing";
 
-/** Quotes a string for diagnostics (escapes control/quote chars). */
-const q = (s: string): string => JSON.stringify(s);
-
 /** Type name reported for the scalar leaf types JSONExtractOp can encounter. */
-function goTypeName(v: unknown): string {
-  if (v === null) return "<nil>";
-  if (typeof v === "number") return "float64";
+function jsonTypeName(v: unknown): string {
+  if (v === null) return "null";
+  if (typeof v === "number") return "number";
   if (typeof v === "string") return "string";
-  if (typeof v === "boolean") return "bool";
+  if (typeof v === "boolean") return "boolean";
   return typeof v;
 }
 
@@ -62,7 +59,7 @@ export function jsonExtract(jsonStr: string, path: string, required = false): st
     let snippet = jsonStr;
     if (snippet.length > 50) snippet = snippet.slice(0, 50) + "...";
     throw new Error(
-      `JSONExtractOp: invalid JSON (starts with ${q(snippet)}): ${(err as Error).message}`,
+      `JSONExtractOp: invalid JSON (starts with ${JSON.stringify(snippet)}): ${(err as Error).message}`,
     );
   }
   let cur: unknown = root;
@@ -75,7 +72,7 @@ export function jsonExtract(jsonStr: string, path: string, required = false): st
       if (!Number.isInteger(idx) || idx < 0 || idx >= cur.length) {
         if (required)
           throw new Error(
-            `JSONExtractOp: index ${q(key)} out of range in path ${q(path)} (len ${cur.length}): ${ErrRequiredPathMissing}`,
+            `JSONExtractOp: index ${JSON.stringify(key)} out of range in path ${JSON.stringify(path)} (len ${cur.length}): ${ErrRequiredPathMissing}`,
           );
         return "";
       }
@@ -84,7 +81,7 @@ export function jsonExtract(jsonStr: string, path: string, required = false): st
       if (!(key in (cur as Record<string, unknown>))) {
         if (required)
           throw new Error(
-            `JSONExtractOp: missing key ${q(key)} in path ${q(path)}: ${ErrRequiredPathMissing}`,
+            `JSONExtractOp: missing key ${JSON.stringify(key)} in path ${JSON.stringify(path)}: ${ErrRequiredPathMissing}`,
           );
         return "";
       }
@@ -92,7 +89,7 @@ export function jsonExtract(jsonStr: string, path: string, required = false): st
     } else {
       if (required)
         throw new Error(
-          `JSONExtractOp: cannot traverse ${goTypeName(cur)} at key ${q(key)} in path ${q(path)}: ${ErrRequiredPathMissing}`,
+          `JSONExtractOp: cannot traverse ${jsonTypeName(cur)} at key ${JSON.stringify(key)} in path ${JSON.stringify(path)}: ${ErrRequiredPathMissing}`,
         );
       return "";
     }

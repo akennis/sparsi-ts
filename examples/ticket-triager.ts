@@ -250,9 +250,11 @@ function build() {
     wf,
     finalBrief,
     otherReject,
-    // The AI vertices, by reference. The driver reports which fired by reading
-    // each node's own `name` and skip status, instead of a hand-maintained
-    // parallel array of label strings (Finding E).
+    // The AI nodes, by reference — the explicit subset of the graph that the
+    // driver reports on. This is not a parallel label array (the names come from
+    // each node's own `name`); it's needed to *restrict* the fired-node report to
+    // AI nodes, since `RunResult.firedNodes()` would also include the non-AI
+    // plumbing nodes.
     aiVertices: [
       cls,
       billingMap,
@@ -310,7 +312,7 @@ async function main() {
 
   // The coalesced brief is the typed union from the lane that fired — read it
   // directly (no JSON.parse, no mutation). `category` is the lane's own literal
-  // (Finding F); `ai_nodes` reads the fired vertices' names (Finding E).
+  // (Finding F); `ai_nodes` is the AI-node subset that fired, by name.
   const brief = result.get(finalBrief);
   const aiNodes = aiVertices.filter((n) => !result.skipped(n)).map((n) => n.name);
   console.log(JSON.stringify({ ...brief, ai_nodes: aiNodes }, null, 2));

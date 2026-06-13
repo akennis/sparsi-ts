@@ -121,8 +121,10 @@ function build() {
   const finalNarrative = wf.op({ narrative, hasTests }, ({ narrative, hasTests }) =>
     ops.text.stringConcat(narrative, hasTests ? "" : WARNING), { name: "final_narrative" });
 
-  // The AI vertices, by reference — the driver reads which fired off each node's
-  // own `name`/skip status instead of a parallel label array (Finding E).
+  // The AI-node subset the driver reports on (names come from each node's own
+  // `name`/skip status, not a parallel label array). It's needed to *restrict*
+  // the fired-node report to AI nodes — `RunResult.firedNodes()` would also
+  // include the non-AI plumbing.
   const aiVertices = [purpose, docScore, clarityScore, hasTests, hasInstall, ...laneNodes];
 
   return { wf, purpose, docScore, clarityScore, avgScore, band, hasTests, hasInstall, finalNarrative, aiVertices };

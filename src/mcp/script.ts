@@ -12,7 +12,9 @@
 import { MCPToolError, type MCPCallOutcome, type MCPSession } from "./client";
 import { acquireMCPSession, prewarmMCPPool } from "./pool";
 import { resolveMCPConfig, type MCPConnectionOptions, type MCPResolvedConfig } from "./transport";
-import { abortError, errMsg, sleepOrAbort } from "./util";
+import { errMsg } from "../internal/error";
+import { warn } from "../internal/warn";
+import { abortError, sleepOrAbort } from "./util";
 
 /** Description for the catalog (`## MCP` section). */
 export const MCPScriptOpDescription = `MCPScriptOp: orchestrate a sequence of MCP tool calls against a single,
@@ -137,7 +139,7 @@ export async function mcpScript<In, Out>(
       sess = await acquireMCPSession(cfg.spec, cfg.initTimeoutMs, cfg.poolSize, signal);
     } catch (err) {
       lastStartErr = err;
-      console.warn(
+      warn(
         `MCPScriptOp.start_failed (attempt ${attempt + 1} of ${cfg.maxRetries + 1}): ${errMsg(err)}`,
       );
       continue;
@@ -152,7 +154,7 @@ export async function mcpScript<In, Out>(
       try {
         await sess.close();
       } catch (e) {
-        console.warn(`MCPScriptOp.close_warn: ${errMsg(e)}`);
+        warn(`MCPScriptOp.close_warn: ${errMsg(e)}`);
       }
     }
   }

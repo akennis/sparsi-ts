@@ -55,9 +55,6 @@ const TICKET_SCHEMA_SPEC = `Required JSON shape:
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Quotes a string for violation messages. */
-const q = (s: string): string => JSON.stringify(s);
-
 /**
  * The wire codec for the struct-target (XML) repair stage. The library owns the
  * escaping, parsing, and fence-stripping that used to be hand-rolled here:
@@ -80,11 +77,11 @@ function readInput(arg: string): string {
 
 function schemaViolations(t: TicketInput): string[] {
   const v: string[] = [];
-  if (!ID_PATTERN.test(t.id)) v.push(`field "id" must match ^T-\\d+$, got ${q(t.id)}`);
+  if (!ID_PATTERN.test(t.id)) v.push(`field "id" must match ^T-\\d+$, got ${JSON.stringify(t.id)}`);
   if (!VALID_PRIOS.has(t.priority))
-    v.push(`field "priority" must be one of low|medium|high|urgent, got ${q(t.priority)}`);
+    v.push(`field "priority" must be one of low|medium|high|urgent, got ${JSON.stringify(t.priority)}`);
   if (!EMAIL_PATTERN.test(t.reporter_email))
-    v.push(`field "reporter_email" must look like an email, got ${q(t.reporter_email)}`);
+    v.push(`field "reporter_email" must look like an email, got ${JSON.stringify(t.reporter_email)}`);
   if (t.summary.trim() === "") v.push(`field "summary" must be non-empty`);
   return v;
 }
@@ -162,37 +159,27 @@ function build() {
   const wf = new Workflow();
   const raw = wf.input<string>("raw");
 
-  // Stage 1 — parse with string-target repair (PromptPrefix + maxAttempts verbatim).
-  const ticket = wf.op({ raw }, ({ raw }, ctx) =>
-    ai.withRepair<string, TicketInput>(
-      raw,
-      {
-        run: (text) => parseTicket(text),
-        // Raw-string target: the inner op parses+validates the JSON itself, so the
-        // codec only needs to strip any code fences off the LLM response.
-        codec: ai.textCodec(),
-        maxAttempts: 3,
-        promptPrefix: "You are a strict JSON corrector. Output the corrected JSON only.\n\n",
-        name: "ParseTicketRepair",
-      },
-      ctx,
-    ),
-    { name: "parse" });
+  // Stage 1 — parse with string-target repair. `wf.ai.repair` makes the repair op
+  // a first-class node: the input is declared once and `ctx` is supplied by the
+  // engine — no hand-wrapping in `wf.op`.
+  const ticket = wf.ai.repair<string, TicketInput>(raw, {
+    run: (text) => parseTicket(text),
+    // Raw-string target: the inner op parses+validates the JSON itself, so the
+    // codec only needs to strip any code fences off the LLM response.
+    codec: ai.textCodec(),
+    maxAttempts: 3,
+    promptPrefix: "You are a strict JSON corrector. Output the corrected JSON only.\n\n",
+    name: "parse",
+  });
 
   // Stage 2 — validate with struct-target (XML) repair.
-  const validated = wf.op({ ticket }, ({ ticket }, ctx) =>
-    ai.withRepair<TicketInput, TicketInput>(
-      ticket,
-      {
-        run: (t) => validateRouting(t),
-        codec: ticketCodec,
-        maxAttempts: 2,
-        promptPrefix: "You are a strict XML ticket corrector. Output corrected XML only.\n\n",
-        name: "ValidateRoutingRepair",
-      },
-      ctx,
-    ),
-    { name: "validate" });
+  const validated = wf.ai.repair<TicketInput, TicketInput>(ticket, {
+    run: (t) => validateRouting(t),
+    codec: ticketCodec,
+    maxAttempts: 2,
+    promptPrefix: "You are a strict XML ticket corrector. Output corrected XML only.\n\n",
+    name: "validate",
+  });
 
   return { wf, validated };
 }
