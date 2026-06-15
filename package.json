@@ -1,0 +1,42 @@
+{
+  "name": "sparsi-ts",
+  "version": "0.1.0",
+  "description": "An idiomatic TypeScript DAG-workflow framework with deterministic and AI-backed operators.",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:skills": "tsx tools/genskills.ts",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "example:temperature": "tsx examples/temperature.ts",
+    "example:ticket": "tsx examples/ticket-triager.ts",
+    "example:recipe": "tsx examples/recipe-analyzer.ts",
+    "example:stock": "tsx examples/stock-analyzer.ts",
+    "example:weather": "tsx examples/weather-advisor.ts",
+    "example:repair": "tsx examples/with-repair.ts",
+    "example:faithful": "tsx examples/faithful-summary.ts",
+    "example:hn": "tsx examples/hn-topic-brief.ts",
+    "example:readme": "tsx examples/readme-quality.ts",
+    "example:local-mcp": "tsx examples/local-mcp-server.ts",
+    "example:remote-mcp": "tsx examples/remote-mcp-server.ts",
+    "example:rag-bm25": "tsx examples/rag-bm25.ts",
+    "example:rag-gemini-embed": "tsx examples/rag-gemini-embed.ts",
+    "example:runner": "tsx examples/example-runner.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "@google/genai": "^2.8.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "fast-xml-parser": "^5.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
