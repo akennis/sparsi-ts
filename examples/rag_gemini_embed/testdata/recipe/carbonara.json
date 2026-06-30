@@ -1,0 +1,13 @@
+{
+  "meals": [
+    {
+      "idMeal": "52982",
+      "strMeal": "Spaghetti Carbonara",
+      "strCategory": "Pasta",
+      "strArea": "Italian",
+      "strInstructions": "Bring a large pot of salted water to a rolling boil and add the spaghetti, cooking until al dente. While the pasta cooks, cut the pancetta into small cubes and fry in a dry pan over medium heat until the fat renders and the edges turn golden and crisp. In a bowl, whisk together the whole eggs, the extra egg yolks, the finely grated Pecorino Romano and Parmesan, and a generous amount of freshly cracked black pepper. Reserve a cup of the starchy pasta water before draining the spaghetti. Working quickly off the heat, add the hot drained pasta to the pan with the pancetta and toss to coat in the rendered fat. Pour in the egg and cheese mixture and toss vigorously, adding splashes of the reserved pasta water a little at a time until the sauce turns glossy and creamy without scrambling the eggs. Taste and adjust the seasoning with more pepper and cheese. Serve immediately in warmed bowls, finishing each portion with an extra grating of Pecorino and a final twist of black pepper.",
+      "strMealThumb": "https://www.themealdb.com/images/media/meals/llcbn01574260722.jpg",
+      "strTags": "Pasta,Classic,Italian"
+    }
+  ]
+}
