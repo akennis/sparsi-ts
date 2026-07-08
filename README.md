@@ -13,6 +13,18 @@ No prompt spaghetti. No orchestration glue. Just typed nodes that compose.
 
 ---
 
+## Performance
+
+Sparsi is built for performance and efficiency. In a 100-sample ticket triage benchmark, Sparsi outperformed LangChain's ReAct agent across all metrics:
+
+- **Accuracy:** 100.00% (vs 94.00%)
+- **Latency:** ~1.74s (vs ~2.92s)
+- **Token Cost:** 65,936 tokens (vs 259,039 tokens)
+
+[See the full benchmark details here.](./examples/benchmark_ticket_triage/README.md)
+
+---
+
 ## Why sparsi-ts?
 
 - **Deterministic where it counts.** Math, string ops, predicates, JSON extraction, time, and IO are plain, testable functions — not LLM calls. AI is opt-in, node by node.
